@@ -726,7 +726,7 @@ void __kmp_exit_single(int gtid) {
  * returns 0 if we should serialize or only use one thread,
  * otherwise the number of threads to use
  * The forkjoin lock is held by the caller. */
-static int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
+int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
                                  int master_tid, int set_nthreads,
                                  int enter_teams) {
   int capacity;
@@ -914,7 +914,7 @@ static int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
 /* Allocate threads from the thread pool and assign them to the new team. We are
    assured that there are enough threads available, because we checked on that
    earlier within critical section forkjoin */
-static void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
+void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
                                     kmp_info_t *master_th, int master_gtid,
                                     int fork_teams_workers) {
   int i;
@@ -1997,8 +1997,16 @@ int __kmp_fork_call(ident_t *loc, int gtid,
            should be created but each can only have 1 thread if nesting is
            disabled. If teams called from serial region, then teams and their
            threads should be created regardless of the nesting setting. */
+        #if KMP_MOLDABILITY
+        if (!(!enter_teams && __kmp_extra_teams != NULL)) {
+        
+          nthreads = __kmp_reserve_threads(root, parent_team, master_tid,
+                                           nthreads, enter_teams);
+        }
+        #else
         nthreads = __kmp_reserve_threads(root, parent_team, master_tid,
                                          nthreads, enter_teams);
+        #endif
         if (nthreads == 1) {
           // Free lock for single thread execution here; for multi-thread
           // execution it will be freed later after team of threads created
@@ -2107,6 +2115,62 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     } else {
       /* allocate a new parallel team */
       KF_TRACE(10, ("__kmp_fork_call: before __kmp_allocate_team\n"));
+#if KMP_MOLDABILITY
+      if (!enter_teams && __kmp_extra_teams != NULL) {
+        // copied from __kmp_allocate_team
+        int used_team_n = __kmp_extra_teams_current_team++;
+
+        KF_TRACE(10, ("__kmp_fork_call: lolol we are here 2, %d\n", used_team_n));
+        KMP_DEBUG_ASSERT(used_team_n < __kmp_extra_teams_n);
+        team = (kmp_team_t *) __kmp_extra_teams[used_team_n];
+        if (nthreads > 1 &&
+            __kmp_barrier_gather_pattern[bs_forkjoin_barrier] == bp_dist_bar) {
+          if (!team->t.b) { // Allocate barrier structure
+            team->t.b = distributedBarrier::allocate(__kmp_dflt_team_nth_ub);
+          }
+        }
+
+        /* setup the team for fresh use */
+        __kmp_initialize_team(team, nthreads, &master_th->th.th_current_task->td_icvs, NULL);
+
+        KA_TRACE(20, ("__kmp_allocate_team: setting task_team[0] %p and "
+                      "task_team[1] %p to NULL\n",
+                      &team->t.t_task_team[0], &team->t.t_task_team[1]));
+        team->t.t_task_team[0] = NULL;
+        team->t.t_task_team[1] = NULL;
+
+        /* reallocate space for arguments if necessary */
+        __kmp_alloc_argv_entries(argc, team, TRUE);
+        KMP_CHECK_UPDATE(team->t.t_argc, argc);
+
+        KA_TRACE(
+            20, ("__kmp_allocate_team: team %d init arrived: join=%u, plain=%u\n",
+                team->t.t_id, KMP_INIT_BARRIER_STATE, KMP_INIT_BARRIER_STATE));
+        { // Initialize barrier data.
+          int b;
+          for (b = 0; b < bs_last_barrier; ++b) {
+            team->t.t_bar[b].b_arrived = KMP_INIT_BARRIER_STATE;
+  #if USE_DEBUGGER
+            team->t.t_bar[b].b_master_arrived = 0;
+            team->t.t_bar[b].b_team_arrived = 0;
+  #endif
+          }
+        }
+
+        team->t.t_proc_bind = proc_bind;
+
+        KA_TRACE(20, ("__kmp_allocate_team: using team from pool %d.\n",
+                      team->t.t_id));
+
+  #if OMPT_SUPPORT
+        __ompt_team_assign_id(team, ompt_parallel_data);
+  #endif
+
+        KMP_MB();
+
+
+      } else {
+#endif
       team = __kmp_allocate_team(root, nthreads, nthreads,
 #if OMPT_SUPPORT
                                  ompt_parallel_data,
@@ -2114,6 +2178,10 @@ int __kmp_fork_call(ident_t *loc, int gtid,
                                  proc_bind,
                                  &master_th->th.th_current_task->td_icvs,
                                  argc USE_NESTED_HOT_ARG(master_th));
+      
+#if KMP_MOLDABILITY
+      }
+#endif
       if (__kmp_barrier_release_pattern[bs_forkjoin_barrier] == bp_dist_bar)
         copy_icvs((kmp_internal_control_t *)team->t.b->team_icvs,
                   &master_th->th.th_current_task->td_icvs);
@@ -8437,13 +8505,19 @@ static kmp_team_t *__kmp_aux_get_team_info(int &teams_serialized) {
 }
 
 int __kmp_aux_get_team_num() {
-  int serialized;
-  kmp_team_t *team = __kmp_aux_get_team_info(serialized);
+  int serialized = 0;
+  // kmp_team_t *team = __kmp_aux_get_team_info(serialized);
+  kmp_info_t *thr = __kmp_entry_thread();
+  kmp_team_t *team = thr->th.th_team;
   if (team) {
     if (serialized > 1) {
-      return 0; // teams region is serialized ( 1 team of 1 thread ).
+      return -2; // teams region is serialized ( 1 team of 1 thread ).
     } else {
+#if KMP_MOLDABILITY
+      return team->t.t_extra_team_id;
+#else
       return team->t.t_master_tid;
+#endif
     }
   }
   return 0;

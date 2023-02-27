@@ -2993,6 +2993,11 @@ typedef struct KMP_ALIGN_CACHE kmp_base_team {
   void *t_stack_id; // team specific stack stitching id (for ittnotify)
 #endif /* USE_ITT_BUILD */
   distributedBarrier *b; // Distributed barrier data associated with team
+
+#if KMP_MOLDABILITY
+  int t_extra_team_id;
+#endif
+
 } kmp_base_team_t;
 
 union KMP_ALIGN_CACHE kmp_team {
@@ -3354,6 +3359,11 @@ extern kmp_old_threads_list_t *__kmp_old_threads_list;
 extern volatile kmp_team_t *__kmp_team_pool;
 extern volatile kmp_info_t *__kmp_thread_pool;
 extern kmp_info_t *__kmp_thread_pool_insert_pt;
+#if KMP_MOLDABILITY
+extern volatile kmp_team_t ** __kmp_extra_teams;
+extern volatile int __kmp_extra_teams_n;
+extern volatile int __kmp_extra_teams_current_team;
+#endif
 
 // total num threads reachable from some root thread including all root threads
 extern volatile int __kmp_nth;
@@ -3821,7 +3831,16 @@ extern int __kmp_fork_call(ident_t *loc, int gtid,
                            enum fork_context_e fork_context, kmp_int32 argc,
                            microtask_t microtask, launch_t invoker,
                            kmp_va_list ap);
-
+#if KMP_MOLDABILITY
+extern void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
+                                    kmp_info_t *master_th, int master_gtid,
+                                    int fork_teams_workers);
+extern void __kmp_setup_icv_copy(kmp_team_t *team, int new_nproc,
+                          kmp_internal_control_t *new_icvs, ident_t *loc);
+extern int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
+                                 int master_tid, int set_nthreads,
+                                 int enter_teams);
+#endif
 extern void __kmp_join_call(ident_t *loc, int gtid
 #if OMPT_SUPPORT
                             ,
@@ -4592,5 +4611,7 @@ template <typename T1, typename T2>
 static inline void __kmp_type_convert(T1 src, T2 *dest) {
   *dest = kmp_convert<T1, T2>::to(src);
 }
+
+extern void __kmp_print_structure(void);
 
 #endif /* KMP_H */

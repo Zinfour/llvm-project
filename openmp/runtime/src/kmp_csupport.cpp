@@ -455,6 +455,47 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
   if (this_thr->th.th_teams_size.nteams == 0) {
     __kmp_push_num_teams(loc, gtid, 0, 0);
   }
+#if KMP_MOLDABILITY
+  kmp_team_t **extra_teams = (kmp_team_t **) kmpc_malloc(this_thr->th.th_teams_size.nteams * sizeof(kmp_team_t *));
+  kmp_internal_control_t new_icvs;
+  copy_icvs(&new_icvs, &this_thr->th.th_current_task->td_icvs);
+  int outer_nthreads = this_thr->th.th_teams_size.nth;
+
+
+  __kmp_acquire_bootstrap_lock(&__kmp_forkjoin_lock);
+  __kmp_extra_teams = (volatile kmp_team **) extra_teams;
+  __kmp_extra_teams_n = this_thr->th.th_teams_size.nteams;
+
+  int tmp_length = __kmp_extra_teams_n;
+  for (int i = 0; i < tmp_length; i++) {
+
+    
+    int nthreads = __kmp_reserve_threads(this_thr->th.th_root, this_thr->th.th_team, this_thr->th.th_info.ds.ds_tid,
+                                      outer_nthreads, 0);
+    kmp_team_t *new_team =
+        __kmp_allocate_team(this_thr->th.th_root, nthreads, nthreads,
+#if OMPT_SUPPORT
+                            ompt_data_none,
+#endif
+                            this_thr->th.th_set_proc_bind, &new_icvs,
+                            argc USE_NESTED_HOT_ARG(this_thr));
+    new_team->t.t_extra_team_id = i;
+
+    __kmp_fork_team_threads(this_thr->th.th_root, new_team, this_thr, gtid, true);
+    __kmp_setup_icv_copy(new_team, nthreads,
+                         &this_thr->th.th_current_task->td_icvs, loc);
+
+
+    KC_TRACE(10, ("__kmpc_fork_teams: T#%d, created new team: %p\n", gtid, new_team));
+    extra_teams[i] = new_team;
+  }
+  __kmp_release_bootstrap_lock(&__kmp_forkjoin_lock);
+
+    // KC_TRACE(10, ("lolol: T#%d, created new team: %p\n", gtid, new_team));
+  __kmp_push_num_teams(loc, gtid, 1, this_thr->th.th_current_task->td_icvs.thread_limit);
+
+    // KC_TRACE(10, ("lolol: T#%d, created new team: %p\n", gtid, new_team));
+#endif
   KMP_DEBUG_ASSERT(this_thr->th.th_set_nproc >= 1);
   KMP_DEBUG_ASSERT(this_thr->th.th_teams_size.nteams >= 1);
   KMP_DEBUG_ASSERT(this_thr->th.th_teams_size.nth >= 1);
@@ -469,6 +510,14 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
                   fork_context_intel
 #endif
   );
+
+#if KMP_MOLDABILITY
+// TODO: do more cleanup
+  kmpc_free(extra_teams);
+
+  __kmp_extra_teams = NULL;
+  __kmp_extra_teams_n = 0;
+#endif
 
   // Pop current CG root off list
   KMP_DEBUG_ASSERT(this_thr->th.th_cg_roots);
