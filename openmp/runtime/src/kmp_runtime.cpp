@@ -24,6 +24,9 @@
 #include "kmp_wait_release.h"
 #include "kmp_wrapper_getpid.h"
 #include "kmp_dispatch.h"
+#if KMP_MOLDABILITY
+#include "kmp_lock.h"
+#endif
 #include <cstdio>
 #if KMP_USE_HIER_SCHED
 #include "kmp_dispatch_hier.h"
@@ -96,7 +99,9 @@ void __kmp_fork_barrier(int gtid, int tid);
 void __kmp_join_barrier(int gtid);
 void __kmp_setup_icv_copy(kmp_team_t *team, int new_nproc,
                           kmp_internal_control_t *new_icvs, ident_t *loc);
-
+static void __kmp_reinitialize_team(kmp_team_t *team,
+                                    kmp_internal_control_t *new_icvs,
+                                    ident_t *loc);
 #ifdef USE_LOAD_BALANCE
 static int __kmp_load_balance_nproc(kmp_root_t *root, int set_nproc);
 #endif
@@ -916,7 +921,7 @@ int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
    earlier within critical section forkjoin */
 void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
                                     kmp_info_t *master_th, int master_gtid,
-                                    int fork_teams_workers) {
+                                    int fork_teams_workers USE_MOLDABILITY(bool using_extra_team)) {
   int i;
   int use_hot_team;
 
@@ -977,8 +982,26 @@ void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
     for (i = 1; i < team->t.t_nproc; i++) {
 
       /* fork or reallocate a new thread and install it in team */
-      kmp_info_t *thr = __kmp_allocate_thread(root, team, i);
-      team->t.t_threads[i] = thr;
+      kmp_info_t *thr;
+      if (!using_extra_team) {
+        thr = __kmp_allocate_thread(root, team, i);
+        team->t.t_threads[i] = thr;
+      } else {
+        thr = team->t.t_threads[i];
+        __kmp_initialize_info(thr, team, i,
+                          thr->th.th_info.ds.ds_gtid);
+        KMP_DEBUG_ASSERT(thr->th.th_serial_team);
+
+        thr->th.th_task_state = 0;
+        thr->th.th_task_state_top = 0;
+        thr->th.th_task_state_stack_sz = 4;
+
+        if (__kmp_barrier_gather_pattern[bs_forkjoin_barrier] == bp_dist_bar) {
+          // Make sure pool thread has transitioned to waiting on own thread struct
+          KMP_DEBUG_ASSERT(thr->th.th_used_in_team.load() == 0);
+          // Thread activated in __kmp_allocate_team when increasing team size
+        }
+      }
       KMP_DEBUG_ASSERT(thr);
       KMP_DEBUG_ASSERT(thr->th.th_team == team);
       /* align team and thread arrived states */
@@ -1974,9 +1997,71 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     // we are allocating the team
     //__kmp_push_current_task_to_thread(master_th, parent_team, 0);
 
-    // Determine the number of threads
     int enter_teams =
         __kmp_is_entering_teams(active_level, level, teams_level, ap);
+    
+    if (!enter_teams && __kmp_extra_teams != NULL && master_th->th.th_set_nproc != 1) {
+        // copied from __kmp_allocate_team
+        int used_team_n = -1;
+        for (int i = 0; i < __kmp_extra_teams_n; i++) {
+          int test_res = __kmp_test_futex_lock((kmp_futex_lock_t *) &__kmp_extra_teams_locks[i], gtid);
+
+          if (test_res) {
+            used_team_n = i;
+            break;
+          }
+        }
+        KMP_DEBUG_ASSERT(used_team_n != -1);
+        KMP_DEBUG_ASSERT(used_team_n < __kmp_extra_teams_n);
+        team = (kmp_team_t *) __kmp_extra_teams[used_team_n];
+
+        KF_TRACE(10, ("__kmp_fork_call: using extra team: %d, %p\n", used_team_n, team));
+        if (nthreads > 1 &&
+            __kmp_barrier_gather_pattern[bs_forkjoin_barrier] == bp_dist_bar) {
+          if (!team->t.b) { // Allocate barrier structure
+            team->t.b = distributedBarrier::allocate(__kmp_dflt_team_nth_ub);
+          }
+        }
+
+        /* setup the team for fresh use */
+        // __kmp_initialize_team(team, nthreads, &master_th->th.th_current_task->td_icvs, NULL);
+        __kmp_reinitialize_team(team, &master_th->th.th_current_task->td_icvs, loc);
+
+        KA_TRACE(20, ("__kmp_allocate_team: setting task_team[0] %p and "
+                      "task_team[1] %p to NULL\n",
+                      &team->t.t_task_team[0], &team->t.t_task_team[1]));
+        team->t.t_task_team[0] = NULL;
+        team->t.t_task_team[1] = NULL;
+
+        /* reallocate space for arguments if necessary */
+        __kmp_alloc_argv_entries(argc, team, TRUE);
+        KMP_CHECK_UPDATE(team->t.t_argc, argc);
+
+        KA_TRACE(
+            20, ("__kmp_allocate_team: team %d init arrived: join=%u, plain=%u\n",
+                team->t.t_id, KMP_INIT_BARRIER_STATE, KMP_INIT_BARRIER_STATE));
+        { // Initialize barrier data.
+          int b;
+          for (b = 0; b < bs_last_barrier; ++b) {
+            team->t.t_bar[b].b_arrived = KMP_INIT_BARRIER_STATE;
+  #if USE_DEBUGGER
+            team->t.t_bar[b].b_master_arrived = 0;
+            team->t.t_bar[b].b_team_arrived = 0;
+  #endif
+          }
+        }
+
+        KA_TRACE(20, ("__kmp_allocate_team: using team from pool %d.\n",
+                      team->t.t_id));
+
+  #if OMPT_SUPPORT
+        __ompt_team_assign_id(team, ompt_parallel_data);
+  #endif
+
+        KMP_MB();
+    }
+
+    // Determine the number of threads
     if ((!enter_teams &&
          (parent_team->t.t_active_level >=
           master_th->th.th_current_task->td_icvs.max_active_levels)) ||
@@ -2104,72 +2189,27 @@ int __kmp_fork_call(ident_t *loc, int gtid,
 
       /* allocate a new parallel team */
       KF_TRACE(10, ("__kmp_fork_call: before __kmp_allocate_team\n"));
+
+#if KMP_MOLDABILITY
+      if (!(!enter_teams && __kmp_extra_teams != NULL)) {
+#endif
       team = __kmp_allocate_team(root, nthreads, nthreads,
 #if OMPT_SUPPORT
                                  ompt_parallel_data,
 #endif
                                  proc_bind, &new_icvs,
                                  argc USE_NESTED_HOT_ARG(master_th));
+
+#if KMP_MOLDABILITY
+      }
+#endif
       if (__kmp_barrier_release_pattern[bs_forkjoin_barrier] == bp_dist_bar)
         copy_icvs((kmp_internal_control_t *)team->t.b->team_icvs, &new_icvs);
     } else {
       /* allocate a new parallel team */
       KF_TRACE(10, ("__kmp_fork_call: before __kmp_allocate_team\n"));
 #if KMP_MOLDABILITY
-      if (!enter_teams && __kmp_extra_teams != NULL) {
-        // copied from __kmp_allocate_team
-        int used_team_n = __kmp_extra_teams_current_team++;
-
-        KF_TRACE(10, ("__kmp_fork_call: lolol we are here 2, %d\n", used_team_n));
-        KMP_DEBUG_ASSERT(used_team_n < __kmp_extra_teams_n);
-        team = (kmp_team_t *) __kmp_extra_teams[used_team_n];
-        if (nthreads > 1 &&
-            __kmp_barrier_gather_pattern[bs_forkjoin_barrier] == bp_dist_bar) {
-          if (!team->t.b) { // Allocate barrier structure
-            team->t.b = distributedBarrier::allocate(__kmp_dflt_team_nth_ub);
-          }
-        }
-
-        /* setup the team for fresh use */
-        __kmp_initialize_team(team, nthreads, &master_th->th.th_current_task->td_icvs, NULL);
-
-        KA_TRACE(20, ("__kmp_allocate_team: setting task_team[0] %p and "
-                      "task_team[1] %p to NULL\n",
-                      &team->t.t_task_team[0], &team->t.t_task_team[1]));
-        team->t.t_task_team[0] = NULL;
-        team->t.t_task_team[1] = NULL;
-
-        /* reallocate space for arguments if necessary */
-        __kmp_alloc_argv_entries(argc, team, TRUE);
-        KMP_CHECK_UPDATE(team->t.t_argc, argc);
-
-        KA_TRACE(
-            20, ("__kmp_allocate_team: team %d init arrived: join=%u, plain=%u\n",
-                team->t.t_id, KMP_INIT_BARRIER_STATE, KMP_INIT_BARRIER_STATE));
-        { // Initialize barrier data.
-          int b;
-          for (b = 0; b < bs_last_barrier; ++b) {
-            team->t.t_bar[b].b_arrived = KMP_INIT_BARRIER_STATE;
-  #if USE_DEBUGGER
-            team->t.t_bar[b].b_master_arrived = 0;
-            team->t.t_bar[b].b_team_arrived = 0;
-  #endif
-          }
-        }
-
-        team->t.t_proc_bind = proc_bind;
-
-        KA_TRACE(20, ("__kmp_allocate_team: using team from pool %d.\n",
-                      team->t.t_id));
-
-  #if OMPT_SUPPORT
-        __ompt_team_assign_id(team, ompt_parallel_data);
-  #endif
-
-        KMP_MB();
-
-
-      } else {
+      if (!(!enter_teams && __kmp_extra_teams != NULL)) {
 #endif
       team = __kmp_allocate_team(root, nthreads, nthreads,
 #if OMPT_SUPPORT
@@ -2190,6 +2230,7 @@ int __kmp_fork_call(ident_t *loc, int gtid,
         10, ("__kmp_fork_call: after __kmp_allocate_team - team = %p\n", team));
 
     /* setup the new team */
+    team->t.t_proc_bind = proc_bind;
     KMP_CHECK_UPDATE(team->t.t_master_tid, master_tid);
     KMP_CHECK_UPDATE(team->t.t_master_this_cons, master_this_cons);
     KMP_CHECK_UPDATE(team->t.t_ident, loc);
@@ -2315,8 +2356,8 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     KMP_CHECK_UPDATE(team->t.t_master_active, master_active);
     if (!root->r.r_active) // Only do assignment if it prevents cache ping-pong
       root->r.r_active = TRUE;
-
-    __kmp_fork_team_threads(root, team, master_th, gtid, !ap);
+    
+    __kmp_fork_team_threads(root, team, master_th, gtid, !ap USE_MOLDABILITY(false));
     __kmp_setup_icv_copy(team, nthreads,
                          &master_th->th.th_current_task->td_icvs, loc);
 
@@ -2708,8 +2749,18 @@ void __kmp_join_call(ident_t *loc, int gtid
   if (root->r.r_active != master_active)
     root->r.r_active = master_active;
 
+#if KMP_MOLDABILITY
+  if (team->t.t_extra_team_id != -1) {
+    KMP_DEBUG_ASSERT(__kmp_release_futex_lock(
+                         (kmp_futex_lock_t *)&__kmp_extra_teams_locks[team->t.t_extra_team_id],
+                         gtid) == KMP_LOCK_RELEASED)
+  } else {
+#endif
   __kmp_free_team(root, team USE_NESTED_HOT_ARG(
                             master_th)); // this will free worker threads
+#if KMP_MOLDABILITY
+  }
+#endif
 
   /* this race was fun to find. make sure the following is in the critical
      region otherwise assertions may fail occasionally since the old team may be
@@ -4812,7 +4863,9 @@ static void __kmp_initialize_team(kmp_team_t *team, int new_nproc,
 #endif
 
   team->t.t_control_stack_top = NULL;
-
+#if KMP_MOLDABILITY
+  team->t.t_extra_team_id = -1;
+#endif
   __kmp_reinitialize_team(team, new_icvs, loc);
 
   KMP_MB();

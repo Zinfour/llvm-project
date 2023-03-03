@@ -453,9 +453,9 @@ volatile int __kmp_all_nth = 0;
 volatile kmp_info_t *__kmp_thread_pool = NULL;
 volatile kmp_team_t *__kmp_team_pool = NULL;
 #if KMP_MOLDABILITY
-volatile kmp_team_t ** __kmp_extra_teams = NULL;
+volatile kmp_team_t **__kmp_extra_teams = NULL;
 volatile int __kmp_extra_teams_n = 0;
-volatile int __kmp_extra_teams_current_team = 0;
+volatile kmp_futex_lock_t *__kmp_extra_teams_locks = NULL;
 #endif
 
 KMP_ALIGN_CACHE

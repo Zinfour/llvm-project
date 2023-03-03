@@ -425,7 +425,7 @@ int __kmp_test_futex_lock(kmp_futex_lock_t *lck, kmp_int32 gtid) {
   return FALSE;
 }
 
-static int __kmp_test_futex_lock_with_checks(kmp_futex_lock_t *lck,
+int __kmp_test_futex_lock_with_checks(kmp_futex_lock_t *lck,
                                              kmp_int32 gtid) {
   char const *const func = "omp_test_lock";
   if ((sizeof(kmp_futex_lock_t) <= OMP_LOCK_T_SIZE) &&
@@ -687,7 +687,7 @@ int __kmp_test_ticket_lock(kmp_ticket_lock_t *lck, kmp_int32 gtid) {
   return FALSE;
 }
 
-static int __kmp_test_ticket_lock_with_checks(kmp_ticket_lock_t *lck,
+int __kmp_test_ticket_lock_with_checks(kmp_ticket_lock_t *lck,
                                               kmp_int32 gtid) {
   char const *const func = "omp_test_lock";
 

@@ -167,6 +167,11 @@ class kmp_stats_list;
 #define USE_NESTED_HOT_ARG(x)
 #endif
 #endif
+#if KMP_MOLDABILITY
+#define USE_MOLDABILITY(x) , x
+#else
+#define USE_MOLDABILITY(x)
+#endif
 
 // Assume using BGET compare_exchange instruction instead of lock by default.
 #ifndef USE_CMP_XCHG_FOR_BGET
@@ -3362,7 +3367,7 @@ extern kmp_info_t *__kmp_thread_pool_insert_pt;
 #if KMP_MOLDABILITY
 extern volatile kmp_team_t ** __kmp_extra_teams;
 extern volatile int __kmp_extra_teams_n;
-extern volatile int __kmp_extra_teams_current_team;
+extern volatile kmp_futex_lock_t * __kmp_extra_teams_locks;
 #endif
 
 // total num threads reachable from some root thread including all root threads
@@ -3834,7 +3839,7 @@ extern int __kmp_fork_call(ident_t *loc, int gtid,
 #if KMP_MOLDABILITY
 extern void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
                                     kmp_info_t *master_th, int master_gtid,
-                                    int fork_teams_workers);
+                                    int fork_teams_workers USE_MOLDABILITY(bool using_extra_team));
 extern void __kmp_setup_icv_copy(kmp_team_t *team, int new_nproc,
                           kmp_internal_control_t *new_icvs, ident_t *loc);
 extern int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
