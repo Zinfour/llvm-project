@@ -285,7 +285,7 @@ typedef union kmp_ticket_lock kmp_ticket_lock_t;
 
 extern int __kmp_acquire_ticket_lock(kmp_ticket_lock_t *lck, kmp_int32 gtid);
 extern int __kmp_test_ticket_lock(kmp_ticket_lock_t *lck, kmp_int32 gtid);
-extern int __kmp_test_ticket_lock_with_cheks(kmp_ticket_lock_t *lck,
+extern int __kmp_test_ticket_lock_with_checks(kmp_ticket_lock_t *lck,
                                              kmp_int32 gtid);
 extern int __kmp_release_ticket_lock(kmp_ticket_lock_t *lck, kmp_int32 gtid);
 extern void __kmp_init_ticket_lock(kmp_ticket_lock_t *lck);
