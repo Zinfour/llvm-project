@@ -983,10 +983,16 @@ void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
 
       /* fork or reallocate a new thread and install it in team */
       kmp_info_t *thr;
+#if KMP_MOLDABILITY
+      // f we're using an extra team, dont allocate any new worker threads.
       if (!using_extra_team) {
+#endif
         thr = __kmp_allocate_thread(root, team, i);
         team->t.t_threads[i] = thr;
+
+#if KMP_MOLDABILITY
       } else {
+        // if we're using an extra team, pretend its a thread from the thread pool.
         thr = team->t.t_threads[i];
         __kmp_initialize_info(thr, team, i,
                           thr->th.th_info.ds.ds_gtid);
@@ -1001,7 +1007,18 @@ void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
           KMP_DEBUG_ASSERT(thr->th.th_used_in_team.load() == 0);
           // Thread activated in __kmp_allocate_team when increasing team size
         }
+
+#ifdef KMP_ADJUST_BLOCKTIME
+        /* Adjust blocktime back to zero if necessary */
+        /* Middle initialization might not have occurred yet */
+        if (!__kmp_env_blocktime && (__kmp_avail_proc > 0)) {
+          if (__kmp_nth > __kmp_avail_proc) {
+            __kmp_zero_bt = TRUE;
+          }
+        }
+#endif /* KMP_ADJUST_BLOCKTIME */
       }
+#endif
       KMP_DEBUG_ASSERT(thr);
       KMP_DEBUG_ASSERT(thr->th.th_team == team);
       /* align team and thread arrived states */
@@ -1999,7 +2016,8 @@ int __kmp_fork_call(ident_t *loc, int gtid,
 
     int enter_teams =
         __kmp_is_entering_teams(active_level, level, teams_level, ap);
-    
+
+#if KMP_MOLDABILITY
     if (!enter_teams && __kmp_extra_teams != NULL && master_th->th.th_set_nproc != 1) {
         // copied from __kmp_allocate_team
         int used_team_n = -1;
@@ -2024,7 +2042,6 @@ int __kmp_fork_call(ident_t *loc, int gtid,
         }
 
         /* setup the team for fresh use */
-        // __kmp_initialize_team(team, nthreads, &master_th->th.th_current_task->td_icvs, NULL);
         __kmp_reinitialize_team(team, &master_th->th.th_current_task->td_icvs, loc);
 
         KA_TRACE(20, ("__kmp_allocate_team: setting task_team[0] %p and "
@@ -2060,6 +2077,8 @@ int __kmp_fork_call(ident_t *loc, int gtid,
 
         KMP_MB();
     }
+
+#endif
 
     // Determine the number of threads
     if ((!enter_teams &&
@@ -2357,7 +2376,7 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     if (!root->r.r_active) // Only do assignment if it prevents cache ping-pong
       root->r.r_active = TRUE;
     
-    __kmp_fork_team_threads(root, team, master_th, gtid, !ap USE_MOLDABILITY(false));
+    __kmp_fork_team_threads(root, team, master_th, gtid, !ap USE_MOLDABILITY(!enter_teams && __kmp_extra_teams != NULL));
     __kmp_setup_icv_copy(team, nthreads,
                          &master_th->th.th_current_task->td_icvs, loc);
 
@@ -2751,6 +2770,7 @@ void __kmp_join_call(ident_t *loc, int gtid
 
 #if KMP_MOLDABILITY
   if (team->t.t_extra_team_id != -1) {
+    // if we're using an extra team, don't free the team, just release the lock
     KMP_DEBUG_ASSERT(__kmp_release_futex_lock(
                          (kmp_futex_lock_t *)&__kmp_extra_teams_locks[team->t.t_extra_team_id],
                          gtid) == KMP_LOCK_RELEASED)
@@ -8559,9 +8579,12 @@ static kmp_team_t *__kmp_aux_get_team_info(int &teams_serialized) {
 
 int __kmp_aux_get_team_num() {
   int serialized = 0;
-  // kmp_team_t *team = __kmp_aux_get_team_info(serialized);
   kmp_info_t *thr = __kmp_entry_thread();
+#if KMP_MOLDABILITY
   kmp_team_t *team = thr->th.th_team;
+#else
+  kmp_team_t *team = __kmp_aux_get_team_info(serialized);
+#endif
   if (team) {
     if (serialized > 1) {
       return -2; // teams region is serialized ( 1 team of 1 thread ).

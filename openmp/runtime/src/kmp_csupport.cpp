@@ -455,14 +455,20 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
   if (this_thr->th.th_teams_size.nteams == 0) {
     __kmp_push_num_teams(loc, gtid, 0, 0);
   }
-#if KMP_MOLDABILITY
 
+#if KMP_MOLDABILITY
+  // create our extra teams and related data structures
   __kmp_acquire_bootstrap_lock(&__kmp_forkjoin_lock);
+
+  // Backup to restore the master thread, This may be bad for performance.
+  kmp_info_t* this_thr_backup = (kmp_info_t *) __kmp_allocate(sizeof(kmp_info_t));;
+
+  KMP_MEMCPY(this_thr_backup, this_thr, sizeof(kmp_info_t));
   kmp_internal_control_t new_icvs;
   copy_icvs(&new_icvs, &this_thr->th.th_current_task->td_icvs);
   int outer_nthreads = this_thr->th.th_teams_size.nth;
 
-  __kmp_extra_teams_locks = (volatile kmp_futex_lock_t *) kmpc_malloc(this_thr->th.th_teams_size.nteams * sizeof(kmp_team_t *));
+  __kmp_extra_teams_locks = (volatile kmp_futex_lock_t *) kmpc_malloc(this_thr->th.th_teams_size.nteams * sizeof(kmp_futex_lock_t));
 
 
   __kmp_extra_teams = (volatile kmp_team **) kmpc_malloc(this_thr->th.th_teams_size.nteams * sizeof(kmp_team_t *));
@@ -472,8 +478,10 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
   for (int i = 0; i < tmp_length; i++) {
 
     
-    // int nthreads = __kmp_reserve_threads(this_thr->th.th_root, this_thr->th.th_team, this_thr->th.th_info.ds.ds_tid,
-    //                                   outer_nthreads, 0);
+    int nthreads = __kmp_reserve_threads(this_thr->th.th_root, this_thr->th.th_team, this_thr->th.th_info.ds.ds_tid,
+                                      outer_nthreads, 0);
+    
+    KMP_DEBUG_ASSERT(nthreads == outer_nthreads);
     kmp_team_t *new_team =
         __kmp_allocate_team(this_thr->th.th_root, outer_nthreads, outer_nthreads,
 #if OMPT_SUPPORT
@@ -483,21 +491,24 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
                             argc USE_NESTED_HOT_ARG(this_thr));
     new_team->t.t_extra_team_id = i;
 
-    // __kmp_fork_team_threads(this_thr->th.th_root, new_team, this_thr, gtid, true, false);
-    // __kmp_setup_icv_copy(new_team, nthreads,
-    //                      &this_thr->th.th_current_task->td_icvs, loc);
+    __kmp_fork_team_threads(this_thr->th.th_root, new_team, this_thr, gtid, true, false);
+    __kmp_setup_icv_copy(new_team, nthreads,
+                         &this_thr->th.th_current_task->td_icvs, loc);
 
 
     KC_TRACE(10, ("__kmpc_fork_teams: T#%d, created new team: %p\n", gtid, new_team));
     __kmp_extra_teams[i] = new_team;
     __kmp_init_futex_lock((kmp_futex_lock_t *) &__kmp_extra_teams_locks[i]);
   }
+
+  // restore the master thread.
+  KMP_MEMCPY(this_thr, this_thr_backup, sizeof(kmp_info_t));
+  __kmp_free(this_thr_backup);
+
   __kmp_release_bootstrap_lock(&__kmp_forkjoin_lock);
 
-    // KC_TRACE(10, ("lolol: T#%d, created new team: %p\n", gtid, new_team));
   __kmp_push_num_teams(loc, gtid, 1, this_thr->th.th_current_task->td_icvs.thread_limit);
 
-    // KC_TRACE(10, ("lolol: T#%d, created new team: %p\n", gtid, new_team));
 #endif
   KMP_DEBUG_ASSERT(this_thr->th.th_set_nproc >= 1);
   KMP_DEBUG_ASSERT(this_thr->th.th_teams_size.nteams >= 1);
@@ -515,8 +526,7 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
   );
 
 #if KMP_MOLDABILITY
-// TODO: do more cleanup
-
+  // free and remove the extra teams
   __kmp_acquire_bootstrap_lock(&__kmp_forkjoin_lock);
   for (int i = 0; i < __kmp_extra_teams_n; i++) {
     KMP_DEBUG_ASSERT(__kmp_test_futex_lock(
@@ -524,6 +534,7 @@ void __kmpc_fork_teams(ident_t *loc, kmp_int32 argc, kmpc_micro microtask,
     KMP_DEBUG_ASSERT(__kmp_release_futex_lock(
                          (kmp_futex_lock_t *)&__kmp_extra_teams_locks[i],
                          gtid) == KMP_LOCK_RELEASED)
+
     __kmp_free_team(this_thr->th.th_root,
                         (kmp_team_t *) __kmp_extra_teams[i] USE_NESTED_HOT_ARG(NULL));
   }
