@@ -607,8 +607,9 @@ static kmp_int32 __kmp_push_moldable_task(kmp_int32 gtid, kmp_task_t *task) {
 static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   kmp_info_t *thread = __kmp_threads[gtid];
   kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-
+#if KMP_MOLDABILITY
   KMP_DEBUG_ASSERT(!taskdata->td_moldable);
+#endif
   // If we encounter a hidden helper task, and the current thread is not a
   // hidden helper thread, we have to give the task to any hidden helper thread
   // starting from its shadow one.
