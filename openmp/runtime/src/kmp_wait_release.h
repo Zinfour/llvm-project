@@ -524,6 +524,9 @@ final_spin=FALSE)
   // Main wait spin loop
   while (flag->notdone_check()) {
     kmp_task_team_t *task_team = NULL;
+#if KMP_MOLDABILITY
+    kmp_moldable_task_team_t *moldable_task_team = NULL;
+#endif
     if (__kmp_tasking_mode != tskm_immediate_exec) {
       task_team = this_thr->th.th_task_team;
       /* If the thread's task team pointer is NULL, it means one of 3 things:
@@ -554,6 +557,31 @@ final_spin=FALSE)
       } else {
         this_thr->th.th_reap_state = KMP_SAFE_TO_REAP;
       } // if
+#if KMP_MOLDABILITY
+
+      moldable_task_team = this_thr->th.th_moldable_task_team;
+      if (moldable_task_team != NULL) {
+        if (TCR_SYNC_4(moldable_task_team->mtt.mtt_active)) {
+          if (KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team)) {
+            flag->execute_moldable_tasks(
+                this_thr, th_gtid, final_spin,
+                &tasks_completed USE_ITT_BUILD_ARG(itt_sync_obj), 0);
+          } else
+            this_thr->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
+        } else {
+          KMP_DEBUG_ASSERT(!KMP_MASTER_TID(this_thr->th.th_info.ds.ds_tid));
+#if OMPT_SUPPORT
+          // task-team is done now, other cases should be catched above
+          if (final_spin && ompt_enabled.enabled)
+            __ompt_implicit_task_end(this_thr, ompt_entry_state, tId);
+#endif
+          this_thr->th.th_moldable_task_team = NULL;
+          this_thr->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
+        }
+      } else {
+        this_thr->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
+      } // if
+#endif
     } // if
 
     KMP_FSYNC_SPIN_PREPARE(CCAST(void *, spin));
@@ -839,6 +867,15 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
+#if KMP_MOLDABILITY
+  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
+                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
+                    kmp_int32 is_constrained) {
+    return __kmp_execute_moldable_tasks_32(
+        this_thr, gtid, this, final_spin,
+        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
+  }
+#endif
   bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
     if (final_spin)
@@ -875,6 +912,15 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
+#if KMP_MOLDABILITY
+  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
+                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
+                    kmp_int32 is_constrained) {
+    return __kmp_execute_moldable_tasks_64(
+        this_thr, gtid, this, final_spin,
+        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
+  }
+#endif
   bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
     if (final_spin)
@@ -911,6 +957,16 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
+
+#if KMP_MOLDABILITY
+  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
+                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
+                    kmp_int32 is_constrained) {
+    return __kmp_atomic_execute_moldable_tasks_64(
+        this_thr, gtid, this, final_spin,
+        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
+  }
+#endif
   bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
     if (final_spin)
@@ -1014,6 +1070,24 @@ public:
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
 #endif
   }
+#if KMP_MOLDABILITY
+  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
+                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
+                    kmp_int32 is_constrained) {
+#if OMPD_SUPPORT
+    int ret = __kmp_execute_moldable_tasks_oncore(
+        this_thr, gtid, this, final_spin,
+        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
+    if (ompd_state & OMPD_ENABLE_BP)
+      ompd_bp_task_end();
+    return ret;
+#else
+    return __kmp_execute_moldable_tasks_oncore(
+        this_thr, gtid, this, final_spin,
+        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
+#endif
+  }
+#endif
   enum barrier_type get_bt() { return bt; }
   flag_type get_ptr_type() { return flag_oncore; }
 };

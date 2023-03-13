@@ -263,6 +263,9 @@ typedef struct ident {
 typedef union kmp_team kmp_team_t;
 typedef struct kmp_taskdata kmp_taskdata_t;
 typedef union kmp_task_team kmp_task_team_t;
+#if KMP_MOLDABILITY
+typedef union kmp_moldable_task_team kmp_moldable_task_team_t;
+#endif
 typedef union kmp_team kmp_team_p;
 typedef union kmp_info kmp_info_p;
 typedef union kmp_root kmp_root_p;
@@ -2340,6 +2343,10 @@ extern kmp_uint64 __kmp_taskloop_min_tasks;
 // were spawned and queued since the previous barrier release.
 #define KMP_TASKING_ENABLED(task_team)                                         \
   (TRUE == TCR_SYNC_4((task_team)->tt.tt_found_tasks))
+#if KMP_MOLDABILITY
+#define KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team)                                         \
+  (TRUE == TCR_SYNC_4((moldable_task_team)->mtt.mtt_found_tasks))
+#endif
 /*!
 @ingroup BASIC_TYPES
 @{
@@ -2584,6 +2591,9 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   ompt_task_info_t ompt_task_info;
 #endif
   kmp_target_data_t td_target_data;
+#if KMP_MOLDABILITY
+  bool td_moldable;
+#endif
 }; // struct kmp_taskdata
 
 // Make sure padding above worked
@@ -2667,6 +2677,34 @@ union KMP_ALIGN_CACHE kmp_task_team {
   char tt_pad[KMP_PAD(kmp_base_task_team_t, CACHE_LINE)];
 };
 
+#if KMP_MOLDABILITY
+// Data for task teams which are used when tasking is enabled for the team
+typedef struct kmp_base_moldable_task_team {
+  kmp_bootstrap_lock_t
+      mtt_threads_lock; /* Lock used to allocate per-thread part of task team */
+  /* must be bootstrap lock since used at library shutdown*/
+  kmp_thread_data_t
+    *mtt_threads_data; /* Array of per-thread structures for task team */
+  /* Data survives task team deallocation */
+  kmp_int32 mtt_found_tasks; /* Have we found tasks and queued them while
+                               executing this team? */
+  kmp_int32 mtt_nproc; /* #primary threads in team           */
+  kmp_int32 mtt_max_threads; // # entries allocated for threads_data array
+
+  KMP_ALIGN_CACHE
+  std::atomic<kmp_int32> mtt_unfinished_threads; /* #threads still active */
+
+  KMP_ALIGN_CACHE
+  volatile kmp_uint32
+      mtt_active; /* is the team still actively executing tasks */
+} kmp_base_moldable_task_team_t;
+
+union KMP_ALIGN_CACHE kmp_moldable_task_team {
+  kmp_base_moldable_task_team_t mtt;
+  double mtt_align; /* use worst case alignment */
+  char mtt_pad[KMP_PAD(kmp_base_task_team_t, CACHE_LINE)];
+};
+#endif
 #if (USE_FAST_MEMORY == 3) || (USE_FAST_MEMORY == 5)
 // Free lists keep same-size free memory slots for fast memory allocation
 // routines
@@ -2810,7 +2848,17 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint32 th_task_state_stack_sz; // Size of th_task_state_memo_stack
   kmp_uint32 th_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
-
+#if KMP_MOLDABILITY
+  kmp_moldable_task_team_t *th_moldable_task_team; // Moldable task team struct
+  kmp_taskdata_t *th_moldable_current_task; // Innermost Task being executed
+  kmp_uint8 th_moldable_task_state; // alternating 0/1 for task team identification
+  kmp_uint8 *th_moldable_task_state_memo_stack; // Stack holding memos of th_task_state
+  // at nested levels
+  kmp_uint32 th_moldable_task_state_top; // Top element of th_task_state_memo_stack
+  kmp_uint32 th_moldable_task_state_stack_sz; // Size of th_task_state_memo_stack
+  kmp_uint32 th_moldable_reap_state; // Non-zero indicates thread is not
+  // tasking, thus safe to reap
+#endif
   /* More stuff for keeping track of active/sleeping threads (this part is
      written by the worker thread) */
   kmp_uint8 th_active_in_pool; // included in count of #active threads in pool
@@ -3000,6 +3048,7 @@ typedef struct KMP_ALIGN_CACHE kmp_base_team {
   distributedBarrier *b; // Distributed barrier data associated with team
 
 #if KMP_MOLDABILITY
+  kmp_moldable_task_team_t *t_moldable_task_team[2]; // Moldable task team struct; switch between 2
   int t_extra_team_id;
 #endif
 
@@ -3149,6 +3198,9 @@ extern volatile int __kmp_init_common;
 extern volatile int __kmp_need_register_serial;
 extern volatile int __kmp_init_middle;
 extern volatile int __kmp_init_parallel;
+#if KMP_MOLDABILITY
+extern volatile int __kmp_init_extra_teams;
+#endif
 #if KMP_USE_MONITOR
 extern volatile int __kmp_init_monitor;
 #endif
@@ -3919,6 +3971,19 @@ extern void __kmp_task_team_wait(kmp_info_t *this_thr, kmp_team_t *team
                                  int wait = 1);
 extern void __kmp_tasking_barrier(kmp_team_t *team, kmp_info_t *thread,
                                   int gtid);
+#if KMP_MOLDABILITY
+extern void __kmp_wait_to_unref_moldable_task_teams(void);
+extern void __kmp_moldable_task_team_setup(kmp_info_t *this_thr, kmp_team_t *team,
+                                  int always);
+extern void __kmp_moldable_task_team_sync(kmp_info_t *this_thr, kmp_team_t *team);
+extern void __kmp_moldable_task_team_wait(kmp_info_t *this_thr, kmp_team_t *team
+#if USE_ITT_BUILD
+                                 ,
+                                 void *itt_sync_obj
+#endif /* USE_ITT_BUILD */
+                                 ,
+                                 int wait = 1);
+#endif
 
 extern int __kmp_is_address_mapped(void *addr);
 extern kmp_uint64 __kmp_hardware_timestamp(void);
@@ -4332,6 +4397,10 @@ extern void __kmp_hidden_helper_worker_thread_wait();
 extern void __kmp_hidden_helper_worker_thread_signal();
 extern void __kmp_hidden_helper_main_thread_release();
 
+#if KMP_MOLDABILITY
+extern void __kmp_extra_teams_initialize();
+#endif
+
 // Check whether a given thread is a hidden helper thread
 #define KMP_HIDDEN_HELPER_THREAD(gtid)                                         \
   ((gtid) >= 1 && (gtid) <= __kmp_hidden_helper_threads_num)
@@ -4434,6 +4503,40 @@ int __kmp_execute_tasks_oncore(kmp_info_t *thread, kmp_int32 gtid,
                                void *itt_sync_obj,
 #endif /* USE_ITT_BUILD */
                                kmp_int32 is_constrained);
+#if KMP_MOLDABILITY
+
+template <bool C, bool S>
+int __kmp_execute_moldable_tasks_32(kmp_info_t *thread, kmp_int32 gtid,
+                           kmp_flag_32<C, S> *flag, int final_spin,
+                           int *thread_finished,
+#if USE_ITT_BUILD
+                           void *itt_sync_obj,
+#endif /* USE_ITT_BUILD */
+                           kmp_int32 is_constrained);
+template <bool C, bool S>
+int __kmp_execute_moldable_tasks_64(kmp_info_t *thread, kmp_int32 gtid,
+                           kmp_flag_64<C, S> *flag, int final_spin,
+                           int *thread_finished,
+#if USE_ITT_BUILD
+                           void *itt_sync_obj,
+#endif /* USE_ITT_BUILD */
+                           kmp_int32 is_constrained);
+template <bool C, bool S>
+int __kmp_atomic_execute_moldable_tasks_64(kmp_info_t *thread, kmp_int32 gtid,
+                                  kmp_atomic_flag_64<C, S> *flag,
+                                  int final_spin, int *thread_finished,
+#if USE_ITT_BUILD
+                                  void *itt_sync_obj,
+#endif /* USE_ITT_BUILD */
+                                  kmp_int32 is_constrained);
+int __kmp_execute_moldable_tasks_oncore(kmp_info_t *thread, kmp_int32 gtid,
+                               kmp_flag_oncore *flag, int final_spin,
+                               int *thread_finished,
+#if USE_ITT_BUILD
+                               void *itt_sync_obj,
+#endif /* USE_ITT_BUILD */
+                               kmp_int32 is_constrained);
+#endif /* KMP_MOLDABILITY */
 
 extern int __kmp_nesting_mode;
 extern int __kmp_nesting_mode_nlevels;
