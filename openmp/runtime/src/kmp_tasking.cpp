@@ -599,7 +599,7 @@ static kmp_int32 __kmp_push_moldable_task(kmp_int32 gtid, kmp_task_t *task) {
 
   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
 
-  return TASK_NOT_PUSHED;
+  return TASK_SUCCESSFULLY_PUSHED;
 }
 #endif
 
@@ -2287,6 +2287,7 @@ static kmp_int32 __kmpc_omp_taskwait_template(ident_t *loc_ref, kmp_int32 gtid,
 
     must_wait = must_wait || (thread->th.th_task_team != NULL &&
                               thread->th.th_task_team->tt.tt_found_proxy_tasks);
+
     // If hidden helper thread is encountered, we must enable wait here.
     must_wait =
         must_wait ||
@@ -2299,9 +2300,22 @@ static kmp_int32 __kmpc_omp_taskwait_template(ident_t *loc_ref, kmp_int32 gtid,
                 &(taskdata->td_incomplete_child_tasks)),
           0U);
       while (KMP_ATOMIC_LD_ACQ(&taskdata->td_incomplete_child_tasks) != 0) {
+#if KMP_MOLDABILITY
+        if (thread->th.th_task_team->tt.tt_threads_data != NULL) {
+          flag.execute_tasks(thread, gtid, FALSE,
+                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
+                            __kmp_task_stealing_constraint);
+        }
+        if (thread->th.th_moldable_task_team->mtt.mtt_threads_data != NULL) {
+          flag.execute_moldable_tasks(thread, gtid, FALSE,
+                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
+                            __kmp_task_stealing_constraint);
+        }
+#else
         flag.execute_tasks(thread, gtid, FALSE,
                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
                            __kmp_task_stealing_constraint);
+#endif
       }
     }
 #if USE_ITT_BUILD
