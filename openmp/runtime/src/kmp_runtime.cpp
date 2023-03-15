@@ -1036,6 +1036,13 @@ static void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
     }
   }
 
+  if (master_th->th.th_moldable_invoke_routine != NULL) {
+    for (i = 0; i < team->t.t_nproc; i++) {
+      kmp_info_t *thr = team->t.t_threads[i];
+      thr->th.th_moldable_invoke_routine = master_th->th.th_moldable_invoke_routine;
+    }
+  }
+
   KMP_MB();
 }
 

@@ -2001,6 +2001,46 @@ static void __kmp_invoke_task(kmp_int32 gtid, kmp_task_t *task,
        gtid, taskdata, current_task));
   return;
 }
+#if KMP_MOLDABILITY
+static void fork_call_helper(ident_t *loc, kmp_int32 argc, kmpc_micro microtask, ...) {
+  int gtid = __kmp_entry_gtid();
+
+  {
+    va_list ap;
+    va_start(ap, microtask);
+
+    __kmp_fork_call(loc, gtid, fork_context_intel, argc,
+                    VOLATILE_CAST(microtask_t) microtask, // "wrapped" task
+                    VOLATILE_CAST(launch_t) __kmp_invoke_task_func,
+                    kmp_va_addr_of(ap));
+    __kmp_join_call(loc, gtid
+#if OMPT_SUPPORT
+                    ,
+                    fork_context_intel
+#endif
+    );
+
+    va_end(ap);
+  }
+}
+static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task) {
+  kmp_info_t *thread = __kmp_threads[*gtid];
+
+  KMP_DEBUG_ASSERT(thread->th.th_moldable_invoke_routine);
+  
+  (*(thread->th.th_moldable_invoke_routine))(*gtid, task);
+}
+static int __kmp_invoke_task_dummy(int gtid, void *task) {
+  kmp_info_t *thread = __kmp_threads[gtid];
+
+  KMP_DEBUG_ASSERT(thread->th.th_moldable_invoke_routine);
+
+  fork_call_helper(thread->th.th_ident, 1, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task);
+
+  return 1;
+}
+
+#endif
 
 // __kmpc_omp_task_parts: Schedule a thread-switchable task for execution
 //
@@ -3911,7 +3951,17 @@ static inline int __kmp_execute_moldable_tasks_template(
         __kmp_itt_task_starting(itt_sync_obj);
       }
 #endif /* USE_ITT_BUILD && USE_ITT_NOTIFY */
-      __kmp_invoke_task(gtid, task, current_task);
+
+        KMP_DEBUG_ASSERT2(!KMP_TASK_TO_TASKDATA(task)->td_flags.native, "moldable tasks do not support gcc compiled tasks yet")
+        thread->th.th_moldable_invoke_routine = task->routine;
+
+        task->routine = __kmp_invoke_task_dummy;
+        
+        __kmp_invoke_task(gtid, task, current_task);
+
+        task->routine = thread->th.th_moldable_invoke_routine;
+        thread->th.th_moldable_invoke_routine = NULL;
+
 #if USE_ITT_BUILD
       if (itt_sync_obj != NULL)
         __kmp_itt_task_finished(itt_sync_obj);

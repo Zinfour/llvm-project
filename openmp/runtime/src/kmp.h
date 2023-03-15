@@ -2858,6 +2858,8 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint32 th_moldable_task_state_stack_sz; // Size of th_task_state_memo_stack
   kmp_uint32 th_moldable_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
+
+  kmp_routine_entry_t th_moldable_invoke_routine;
 #endif
   /* More stuff for keeping track of active/sleeping threads (this part is
      written by the worker thread) */
