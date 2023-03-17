@@ -1726,7 +1726,9 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
     }
   }
 #if KMP_MOLDABILITY
+if (flags->moldable) {
   taskdata->td_moldable = true;
+}
 #endif
 
   KA_TRACE(20, ("__kmp_task_alloc(exit): T#%d created task %p parent=%p\n",
@@ -1744,9 +1746,10 @@ kmp_task_t *__kmpc_omp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
   __kmp_assert_valid_gtid(gtid);
   input_flags->native = FALSE;
   // __kmp_task_alloc() sets up all other runtime flags
-  KA_TRACE(10, ("__kmpc_omp_task_alloc(enter): T#%d loc=%p, flags=(%s %s %s) "
+  KA_TRACE(10, ("__kmpc_omp_task_alloc(enter): T#%d loc=%p, flags=(%s %s %s %s) "
                 "sizeof_task=%ld sizeof_shared=%ld entry=%p\n",
-                gtid, loc_ref, input_flags->tiedness ? "tied  " : "untied",
+                gtid, loc_ref, input_flags->tiedness ? "tied " : "untied ",
+                input_flags->moldable ? "moldable  " : "nonmoldable ",
                 input_flags->proxy ? "proxy" : "",
                 input_flags->detachable ? "detachable" : "", sizeof_kmp_task_t,
                 sizeof_shareds, task_entry));

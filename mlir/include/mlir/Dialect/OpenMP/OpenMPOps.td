@@ -528,6 +528,7 @@ def TaskOp : OpenMP_Op<"task", [AttrSizedOperandSegments,
   let arguments = (ins Optional<I1>:$if_expr,
                        Optional<I1>:$final_expr,
                        UnitAttr:$untied,
+                       UnitAttr:$moldable,
                        UnitAttr:$mergeable,
                        Variadic<OpenMP_PointerLikeType>:$in_reduction_vars,
                        OptionalAttr<SymbolRefArrayAttr>:$in_reductions,
@@ -539,6 +540,7 @@ def TaskOp : OpenMP_Op<"task", [AttrSizedOperandSegments,
     oilist(`if` `(` $if_expr `)`
           |`final` `(` $final_expr `)`
           |`untied` $untied
+          |`moldable` $moldable
           |`mergeable` $mergeable
           |`in_reduction` `(`
               custom<ReductionVarList>(

@@ -6493,6 +6493,8 @@ void OMPClauseWriter::VisitOMPNowaitClause(OMPNowaitClause *) {}
 
 void OMPClauseWriter::VisitOMPUntiedClause(OMPUntiedClause *) {}
 
+void OMPClauseWriter::VisitOMPMoldableClause(OMPMoldableClause *) {}
+
 void OMPClauseWriter::VisitOMPMergeableClause(OMPMergeableClause *) {}
 
 void OMPClauseWriter::VisitOMPReadClause(OMPReadClause *) {}

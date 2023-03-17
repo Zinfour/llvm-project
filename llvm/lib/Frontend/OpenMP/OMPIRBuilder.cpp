@@ -1282,7 +1282,7 @@ void OpenMPIRBuilder::createTaskyield(const LocationDescription &Loc) {
 OpenMPIRBuilder::InsertPointTy
 OpenMPIRBuilder::createTask(const LocationDescription &Loc,
                             InsertPointTy AllocaIP, BodyGenCallbackTy BodyGenCB,
-                            bool Tied, Value *Final, Value *IfCondition,
+                            bool Tied, bool Moldable, Value *Final, Value *IfCondition,
                             SmallVector<DependData> Dependencies) {
   if (!updateToLocation(Loc))
     return InsertPointTy();
@@ -1315,7 +1315,7 @@ OpenMPIRBuilder::createTask(const LocationDescription &Loc,
   OI.EntryBB = TaskAllocaBB;
   OI.OuterAllocaBB = AllocaIP.getBlock();
   OI.ExitBB = TaskExitBB;
-  OI.PostOutlineCB = [this, Ident, Tied, Final, IfCondition,
+  OI.PostOutlineCB = [this, Ident, Tied, Moldable, Final, IfCondition,
                       Dependencies](Function &OutlinedFn) {
     // The input IR here looks like the following-
     // ```
@@ -1368,6 +1368,12 @@ OpenMPIRBuilder::createTask(const LocationDescription &Loc,
       Value *FinalFlag =
           Builder.CreateSelect(Final, Builder.getInt32(2), Builder.getInt32(0));
       Flags = Builder.CreateOr(FinalFlag, Flags);
+    }
+
+    // Task is moldable iff (Flags & 4) == 4.
+    // Task is not moldable iff (Flags & 4) == 0.
+    if (Moldable) {
+      Flags = Builder.CreateOr(Flags, Builder.getInt32(4));
     }
 
     // Argument - `sizeof_kmp_task_t` (TaskSize)

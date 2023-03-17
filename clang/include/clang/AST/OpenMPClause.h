@@ -1972,6 +1972,46 @@ public:
   }
 };
 
+
+/// This represents 'moldable' clause in the '#pragma omp ...' directive.
+///
+/// \code
+/// #pragma omp task moldable
+/// \endcode
+/// In this example directive '#pragma omp task' has 'moldable' clause.
+class OMPMoldableClause : public OMPClause {
+public:
+  /// Build 'moldable' clause.
+  ///
+  /// \param StartLoc Starting location of the clause.
+  /// \param EndLoc Ending location of the clause.
+  OMPMoldableClause(SourceLocation StartLoc, SourceLocation EndLoc)
+      : OMPClause(llvm::omp::OMPC_moldable, StartLoc, EndLoc) {}
+
+  /// Build an empty clause.
+  OMPMoldableClause()
+      : OMPClause(llvm::omp::OMPC_moldable, SourceLocation(), SourceLocation()) {}
+
+  child_range children() {
+    return child_range(child_iterator(), child_iterator());
+  }
+
+  const_child_range children() const {
+    return const_child_range(const_child_iterator(), const_child_iterator());
+  }
+
+  child_range used_children() {
+    return child_range(child_iterator(), child_iterator());
+  }
+  const_child_range used_children() const {
+    return const_child_range(const_child_iterator(), const_child_iterator());
+  }
+
+  static bool classof(const OMPClause *T) {
+    return T->getClauseKind() == llvm::omp::OMPC_moldable;
+  }
+};
+
 /// This represents 'mergeable' clause in the '#pragma omp ...'
 /// directive.
 ///

@@ -771,6 +771,8 @@ public:
   /// \param AllocaIP The insertion point to be used for alloca instructions.
   /// \param BodyGenCB Callback that will generate the region code.
   /// \param Tied True if the task is tied, false if the task is untied.
+  /// \param Moldable True if the task is moldable, false if the task is not
+  ///                 moldable.
   /// \param Final i1 value which is `true` if the task is final, `false` if the
   ///              task is not final.
   /// \param IfCondition i1 value. If it evaluates to `false`, an undeferred
@@ -781,7 +783,7 @@ public:
   ///                    completed.
   InsertPointTy createTask(const LocationDescription &Loc,
                            InsertPointTy AllocaIP, BodyGenCallbackTy BodyGenCB,
-                           bool Tied = true, Value *Final = nullptr,
+                           bool Tied = true, bool Moldable = false, Value *Final = nullptr,
                            Value *IfCondition = nullptr,
                            SmallVector<DependData> Dependencies = {});
 

@@ -6734,6 +6734,7 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(
       case OMPC_copyprivate:
       case OMPC_nowait:
       case OMPC_untied:
+      case OMPC_moldable:
       case OMPC_mergeable:
       case OMPC_allocate:
       case OMPC_read:
@@ -15242,6 +15243,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind, Expr *Expr,
   case OMPC_copyprivate:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_sizes:
@@ -16189,6 +16191,7 @@ static OpenMPDirectiveKind getOpenMPCaptureRegionForClause(
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_allocate:
@@ -16672,6 +16675,7 @@ OMPClause *Sema::ActOnOpenMPSimpleClause(
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_allocate:
@@ -17070,6 +17074,7 @@ OMPClause *Sema::ActOnOpenMPSingleExprWithArgClause(
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_allocate:
@@ -17254,6 +17259,9 @@ OMPClause *Sema::ActOnOpenMPClause(OpenMPClauseKind Kind,
   case OMPC_untied:
     Res = ActOnOpenMPUntiedClause(StartLoc, EndLoc);
     break;
+  case OMPC_moldable:
+    Res = ActOnOpenMPMoldableClause(StartLoc, EndLoc);
+    break;
   case OMPC_mergeable:
     Res = ActOnOpenMPMergeableClause(StartLoc, EndLoc);
     break;
@@ -17397,6 +17405,12 @@ OMPClause *Sema::ActOnOpenMPUntiedClause(SourceLocation StartLoc,
                                          SourceLocation EndLoc) {
   DSAStack->setUntiedRegion();
   return new (Context) OMPUntiedClause(StartLoc, EndLoc);
+}
+
+OMPClause *Sema::ActOnOpenMPMoldableClause(SourceLocation StartLoc,
+                                         SourceLocation EndLoc) {
+  // P: Do we need a moldable region here?
+  return new (Context) OMPMoldableClause(StartLoc, EndLoc);
 }
 
 OMPClause *Sema::ActOnOpenMPMergeableClause(SourceLocation StartLoc,
@@ -17900,6 +17914,7 @@ OMPClause *Sema::ActOnOpenMPVarListClause(OpenMPClauseKind Kind,
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_read:

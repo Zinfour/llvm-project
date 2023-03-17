@@ -2514,6 +2514,7 @@ typedef struct kmp_tasking_flags { /* Total struct must be exactly 32 bits */
   /* Compiler flags */ /* Total compiler flags must be 16 bits */
   unsigned tiedness : 1; /* task is either tied (1) or untied (0) */
   unsigned final : 1; /* task is final(1) so execute immediately */
+  unsigned moldable : 1; /* task is moldable */
   unsigned merged_if0 : 1; /* no __kmpc_task_{begin/complete}_if0 calls in if0
                               code path */
   unsigned destructors_thunk : 1; /* set if the compiler creates a thunk to
@@ -2524,7 +2525,7 @@ typedef struct kmp_tasking_flags { /* Total struct must be exactly 32 bits */
                                       setting for the task */
   unsigned detachable : 1; /* 1 == can detach */
   unsigned hidden_helper : 1; /* 1 == hidden helper task */
-  unsigned reserved : 8; /* reserved for compiler use */
+  unsigned reserved : 7; /* reserved for compiler use */
 
   /* Library flags */ /* Total library flags must be 16 bits */
   unsigned tasktype : 1; /* task is either explicit(1) or implicit (0) */
@@ -3890,16 +3891,7 @@ extern int __kmp_fork_call(ident_t *loc, int gtid,
                            enum fork_context_e fork_context, kmp_int32 argc,
                            microtask_t microtask, launch_t invoker,
                            kmp_va_list ap);
-#if KMP_MOLDABILITY
-extern void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
-                                    kmp_info_t *master_th, int master_gtid,
-                                    int fork_teams_workers USE_MOLDABILITY(bool using_extra_team));
-extern void __kmp_setup_icv_copy(kmp_team_t *team, int new_nproc,
-                          kmp_internal_control_t *new_icvs, ident_t *loc);
-extern int __kmp_reserve_threads(kmp_root_t *root, kmp_team_t *parent_team,
-                                 int master_tid, int set_nthreads,
-                                 int enter_teams);
-#endif
+
 extern void __kmp_join_call(ident_t *loc, int gtid
 #if OMPT_SUPPORT
                             ,

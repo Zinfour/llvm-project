@@ -10030,6 +10030,9 @@ OMPClause *OMPClauseReader::readClause() {
   case llvm::omp::OMPC_untied:
     C = new (Context) OMPUntiedClause();
     break;
+  case llvm::omp::OMPC_moldable:
+    C = new (Context) OMPMoldableClause();
+    break;
   case llvm::omp::OMPC_mergeable:
     C = new (Context) OMPMergeableClause();
     break;
@@ -10410,6 +10413,8 @@ void OMPClauseReader::VisitOMPDetachClause(OMPDetachClause *C) {
 void OMPClauseReader::VisitOMPNowaitClause(OMPNowaitClause *) {}
 
 void OMPClauseReader::VisitOMPUntiedClause(OMPUntiedClause *) {}
+
+void OMPClauseReader::VisitOMPMoldableClause(OMPMoldableClause *) {}
 
 void OMPClauseReader::VisitOMPMergeableClause(OMPMergeableClause *) {}
 

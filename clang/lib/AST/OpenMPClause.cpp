@@ -121,6 +121,7 @@ const OMPClauseWithPreInit *OMPClauseWithPreInit::get(const OMPClause *C) {
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_flush:
@@ -217,6 +218,7 @@ const OMPClauseWithPostUpdate *OMPClauseWithPostUpdate::get(const OMPClause *C) 
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_threadprivate:
   case OMPC_flush:
@@ -1844,6 +1846,10 @@ void OMPClausePrinter::VisitOMPNowaitClause(OMPNowaitClause *) {
 
 void OMPClausePrinter::VisitOMPUntiedClause(OMPUntiedClause *) {
   OS << "untied";
+}
+
+void OMPClausePrinter::VisitOMPMoldableClause(OMPMoldableClause *) {
+  OS << "moldable";
 }
 
 void OMPClausePrinter::VisitOMPNogroupClause(OMPNogroupClause *) {

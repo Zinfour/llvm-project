@@ -201,6 +201,7 @@ def OMPC_NoWait : Clause<"nowait"> {
   let clangClass = "OMPNowaitClause";
 }
 def OMPC_Untied : Clause<"untied"> { let clangClass = "OMPUntiedClause"; }
+def OMPC_Moldable : Clause<"moldable"> { let clangClass = "OMPMoldableClause"; }
 def OMPC_Mergeable : Clause<"mergeable"> {
   let clangClass = "OMPMergeableClause";
 }
@@ -468,6 +469,7 @@ def OMP_Task : Directive<"task"> {
     VersionedClause<OMPC_FirstPrivate>,
     VersionedClause<OMPC_Shared>,
     VersionedClause<OMPC_Untied>,
+    VersionedClause<OMPC_Moldable>,
     VersionedClause<OMPC_Mergeable>,
     VersionedClause<OMPC_Depend>,
     VersionedClause<OMPC_InReduction>,

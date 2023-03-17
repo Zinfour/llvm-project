@@ -9703,6 +9703,13 @@ TreeTransform<Derived>::TransformOMPUntiedClause(OMPUntiedClause *C) {
 
 template <typename Derived>
 OMPClause *
+TreeTransform<Derived>::TransformOMPMoldableClause(OMPMoldableClause *C) {
+  // No need to rebuild this clause, no template-dependent parameters.
+  return C;
+}
+
+template <typename Derived>
+OMPClause *
 TreeTransform<Derived>::TransformOMPMergeableClause(OMPMergeableClause *C) {
   // No need to rebuild this clause, no template-dependent parameters.
   return C;

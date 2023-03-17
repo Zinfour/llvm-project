@@ -192,6 +192,7 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind, StringRef Str,
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_flush:
   case OMPC_depobj:
@@ -501,6 +502,7 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_ordered:
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_flush:
   case OMPC_depobj:

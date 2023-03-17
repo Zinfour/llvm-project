@@ -118,6 +118,7 @@ struct OMPTaskDataTy final {
   llvm::Value *Reductions = nullptr;
   unsigned NumberOfParts = 0;
   bool Tied = true;
+  bool Moldable = false;
   bool Nogroup = false;
   bool IsReductionWithTaskMod = false;
   bool IsWorksharingReduction = false;

@@ -554,6 +554,8 @@ void OMPClauseProfiler::VisitOMPNowaitClause(const OMPNowaitClause *) {}
 
 void OMPClauseProfiler::VisitOMPUntiedClause(const OMPUntiedClause *) {}
 
+void OMPClauseProfiler::VisitOMPMoldableClause(const OMPMoldableClause *) {}
+
 void OMPClauseProfiler::VisitOMPMergeableClause(const OMPMergeableClause *) {}
 
 void OMPClauseProfiler::VisitOMPReadClause(const OMPReadClause *) {}

@@ -7671,7 +7671,7 @@ void __kmp_extra_teams_initialize() {
                             0 USE_NESTED_HOT_ARG(dummy_thread));
     new_team->t.t_extra_team_id = i;
 
-    __kmp_fork_team_threads(dummy_thread->th.th_root, new_team, dummy_thread, gtid, true, false);
+    __kmp_fork_team_threads(dummy_thread->th.th_root, new_team, dummy_thread, gtid, true);
 
 
     KC_TRACE(10, ("__kmpc_fork_teams: T#%d, created new team: %p\n", gtid, new_team));

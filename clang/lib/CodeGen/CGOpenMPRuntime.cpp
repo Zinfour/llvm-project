@@ -3911,11 +3911,15 @@ CGOpenMPRuntime::emitTaskInit(CodeGenFunction &CGF, SourceLocation Loc,
   enum {
     TiedFlag = 0x1,
     FinalFlag = 0x2,
+    MoldableFlag = 0x4,
     DestructorsFlag = 0x8,
     PriorityFlag = 0x20,
     DetachableFlag = 0x40,
   };
   unsigned Flags = Data.Tied ? TiedFlag : 0;
+  if (Data.Moldable) {
+    Flags = Flags | MoldableFlag;
+  }
   bool NeedsCleanup = false;
   if (!Privates.empty()) {
     NeedsCleanup =

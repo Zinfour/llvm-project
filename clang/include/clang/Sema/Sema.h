@@ -11859,6 +11859,9 @@ public:
   /// Called on well-formed 'untied' clause.
   OMPClause *ActOnOpenMPUntiedClause(SourceLocation StartLoc,
                                      SourceLocation EndLoc);
+  /// Called on well-formed 'moldable' clause.
+  OMPClause *ActOnOpenMPMoldableClause(SourceLocation StartLoc,
+                                       SourceLocation EndLoc);
   /// Called on well-formed 'mergeable' clause.
   OMPClause *ActOnOpenMPMergeableClause(SourceLocation StartLoc,
                                         SourceLocation EndLoc);

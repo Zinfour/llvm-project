@@ -3289,6 +3289,7 @@ OMPClause *Parser::ParseOpenMPClause(OpenMPDirectiveKind DKind,
     break;
   case OMPC_nowait:
   case OMPC_untied:
+  case OMPC_moldable:
   case OMPC_mergeable:
   case OMPC_read:
   case OMPC_write:

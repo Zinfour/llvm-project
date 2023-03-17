@@ -697,7 +697,7 @@ convertOmpTaskOp(omp::TaskOp taskOp, llvm::IRBuilderBase &builder,
       findAllocaInsertPoint(builder, moduleTranslation);
   llvm::OpenMPIRBuilder::LocationDescription ompLoc(builder);
   builder.restoreIP(moduleTranslation.getOpenMPBuilder()->createTask(
-      ompLoc, allocaIP, bodyCB, !taskOp.getUntied()));
+      ompLoc, allocaIP, bodyCB, !taskOp.getUntied(), taskOp.getMoldable()));
   return bodyGenStatus;
 }
 
