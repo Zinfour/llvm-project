@@ -2594,6 +2594,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   kmp_target_data_t td_target_data;
 #if KMP_MOLDABILITY
   bool td_moldable;
+  kmp_moldable_task_team *td_moldable_task_team;
 #endif
 }; // struct kmp_taskdata
 

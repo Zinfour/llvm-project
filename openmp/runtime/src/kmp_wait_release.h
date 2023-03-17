@@ -371,6 +371,9 @@ __kmp_wait_template(kmp_info_t *this_thr,
   kmp_uint32 spins;
   int th_gtid;
   int tasks_completed = FALSE;
+#if KMP_MOLDABILITY
+  int moldable_tasks_completed = FALSE;
+#endif
 #if !KMP_USE_MONITOR
   kmp_uint64 poll_count;
   kmp_uint64 hibernate_goal;
@@ -558,14 +561,13 @@ final_spin=FALSE)
         this_thr->th.th_reap_state = KMP_SAFE_TO_REAP;
       } // if
 #if KMP_MOLDABILITY
-
       moldable_task_team = this_thr->th.th_moldable_task_team;
       if (moldable_task_team != NULL) {
         if (TCR_SYNC_4(moldable_task_team->mtt.mtt_active)) {
           if (KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team)) {
             flag->execute_moldable_tasks(
                 this_thr, th_gtid, final_spin,
-                &tasks_completed USE_ITT_BUILD_ARG(itt_sync_obj), 0);
+                &moldable_tasks_completed USE_ITT_BUILD_ARG(itt_sync_obj), 0);
           } else
             this_thr->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
         } else {
@@ -678,9 +680,15 @@ final_spin=FALSE)
       if (__kmp_global.g.g_abort)
         __kmp_abort_thread();
       break;
-    } else if (__kmp_tasking_mode != tskm_immediate_exec &&
-               this_thr->th.th_reap_state == KMP_SAFE_TO_REAP) {
-      this_thr->th.th_reap_state = KMP_NOT_SAFE_TO_REAP;
+    } else if (__kmp_tasking_mode != tskm_immediate_exec) {
+      if (this_thr->th.th_reap_state == KMP_SAFE_TO_REAP) {
+        this_thr->th.th_reap_state = KMP_NOT_SAFE_TO_REAP;
+      }
+#if KMP_MOLDABILITY
+      if (this_thr->th.th_moldable_reap_state == KMP_SAFE_TO_REAP) {
+        this_thr->th.th_moldable_reap_state = KMP_NOT_SAFE_TO_REAP;
+      }
+#endif
     }
     // TODO: If thread is done with work and times out, disband/free
   }
@@ -724,6 +732,16 @@ final_spin=FALSE)
             &(task_team->tt.tt_unfinished_threads);
         KMP_ATOMIC_INC(unfinished_threads);
       }
+#if KMP_MOLDABILITY
+      if (moldable_tasks_completed) {
+        // undo the previous decrement of unfinished_threads so that the
+        // thread can decrement at the join barrier with no problem
+        kmp_moldable_task_team_t *moldable_task_team = this_thr->th.th_moldable_task_team;
+        std::atomic<kmp_int32> *unfinished_threads =
+            &(moldable_task_team->mtt.mtt_unfinished_threads);
+        KMP_ATOMIC_INC(unfinished_threads);
+      }
+#endif
       return true;
     }
   }

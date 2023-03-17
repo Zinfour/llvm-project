@@ -4282,12 +4282,21 @@ static void __kmp_initialize_info(kmp_info_t *this_thr, kmp_team_t *team,
 
   this_thr->th.th_info.ds.ds_tid = tid;
   this_thr->th.th_set_nproc = 0;
-  if (__kmp_tasking_mode != tskm_immediate_exec)
+  if (__kmp_tasking_mode != tskm_immediate_exec) {
+
     // When tasking is possible, threads are not safe to reap until they are
     // done tasking; this will be set when tasking code is exited in wait
     this_thr->th.th_reap_state = KMP_NOT_SAFE_TO_REAP;
-  else // no tasking --> always safe to reap
+#if KMP_MOLDABILITY
+    this_thr->th.th_moldable_reap_state = KMP_NOT_SAFE_TO_REAP;
+#endif
+  } else {
+    // no tasking --> always safe to reap
     this_thr->th.th_reap_state = KMP_SAFE_TO_REAP;
+#if KMP_MOLDABILITY
+    this_thr->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
+#endif
+  }
   this_thr->th.th_set_proc_bind = proc_bind_default;
 #if KMP_AFFINITY_SUPPORTED
   this_thr->th.th_new_place = this_thr->th.th_current_place;
@@ -6418,6 +6427,9 @@ static void __kmp_internal_end(void) {
       __kmp_thread_pool = thread->th.th_next_pool;
       // Reap it.
       KMP_DEBUG_ASSERT(thread->th.th_reap_state == KMP_SAFE_TO_REAP);
+#if KMP_MOLDABILITY
+      KMP_DEBUG_ASSERT(thread->th.th_moldable_reap_state == KMP_SAFE_TO_REAP);
+#endif
       thread->th.th_next_pool = NULL;
       thread->th.th_in_pool = FALSE;
       __kmp_reap_thread(thread, 0);
