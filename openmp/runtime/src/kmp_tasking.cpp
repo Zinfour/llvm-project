@@ -3885,6 +3885,7 @@ static inline int __kmp_execute_moldable_tasks_template(
 
   nthreads = moldable_task_team->mtt.mtt_nproc;
   unfinished_threads = &(moldable_task_team->mtt.mtt_unfinished_threads);
+  KMP_DEBUG_ASSERT(nthreads > 1);
   // KMP_DEBUG_ASSERT(nthreads > 1 || moldable_task_team->mtt.mtt_found_proxy_tasks ||
   //                  moldable_task_team->mtt.mtt_hidden_helper_task_encountered);
   KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
@@ -5104,8 +5105,7 @@ void __kmp_moldable_task_team_setup(kmp_info_t *this_thr, kmp_team_t *team, int 
     for (int j = 0; j < moldable_task_team->mtt.mtt_nproc; ++j) {
       kmp_thread_data_t *thread_data = &moldable_task_team->mtt.mtt_threads_data[j];
       if (thread_data->td.td_deque == NULL) {
-
-        __kmp_alloc_task_deque(thread_data[j].td.td_thr, thread_data);
+        __kmp_alloc_task_deque(thread_data->td.td_thr, thread_data);
       }
     }
   }
