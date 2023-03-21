@@ -2707,10 +2707,6 @@ void __kmp_join_call(ident_t *loc, int gtid
     // Copy the task team from the parent team to the primary thread
     master_th->th.th_task_team =
         parent_team->t.t_task_team[master_th->th.th_task_state];
-#if KMP_MOLDABILITY
-    master_th->th.th_moldable_task_team =
-        parent_team->t.t_moldable_task_team[master_th->th.th_moldable_task_state];
-#endif
     KA_TRACE(20,
              ("__kmp_join_call: Primary T#%d restoring task_team %p, team %p\n",
               __kmp_gtid_from_thread(master_th), master_th->th.th_task_team,
@@ -4114,6 +4110,9 @@ static int __kmp_reset_root(int gtid, kmp_root_t *root) {
   // steal tasks.
   if (__kmp_tasking_mode != tskm_immediate_exec) {
     __kmp_wait_to_unref_task_teams();
+#if KMP_MOLDABILITY
+    __kmp_wait_to_unref_moldable_task_teams();
+#endif
   }
 
 #if KMP_OS_WINDOWS
@@ -5765,6 +5764,24 @@ void __kmp_free_team(kmp_root_t *root,
             fl.resume(__kmp_gtid_from_thread(th));
           KMP_CPU_PAUSE();
         }
+#if KMP_MOLDABILITY
+        volatile kmp_uint32 *state_m = &th->th.th_moldable_reap_state;
+        while (*state_m != KMP_SAFE_TO_REAP) {
+#if KMP_OS_WINDOWS
+          // On Windows a thread can be killed at any time, check this
+          DWORD ecode;
+          if (!__kmp_is_thread_alive(th, &ecode)) {
+            *state = KMP_SAFE_TO_REAP; // reset the flag for dead thread
+            break;
+          }
+#endif
+          // first check if thread is sleeping
+          kmp_flag_64<> fl(&th->th.th_bar[bs_forkjoin_barrier].bb.b_go, th);
+          if (fl.is_sleeping())
+            fl.resume(__kmp_gtid_from_thread(th));
+          KMP_CPU_PAUSE();
+        }
+#endif
       }
 
       // Delete task teams
@@ -5936,6 +5953,9 @@ void __kmp_free_thread(kmp_info_t *this_th) {
   }
   this_th->th.th_task_state = 0;
   this_th->th.th_reap_state = KMP_SAFE_TO_REAP;
+#if KMP_MOLDABILITY
+  this_th->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
+#endif
 
   /* put thread back on the free pool */
   TCW_PTR(this_th->th.th_team, NULL);

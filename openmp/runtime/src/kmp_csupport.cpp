@@ -665,7 +665,7 @@ void __kmpc_end_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
           this_thr->th.th_team->t.t_task_team[this_thr->th.th_task_state];
 #if KMP_MOLDABILITY
       this_thr->th.th_moldable_task_team =
-          this_thr->th.th_team->t.t_moldable_task_team[this_thr->th.th_moldable_task_state];
+          this_thr->th.th_team->t.t_moldable_task_team[this_thr->th.th_task_state];
 #endif
       KA_TRACE(20,
                ("__kmpc_end_serialized_parallel: T#%d restoring task_team %p / "

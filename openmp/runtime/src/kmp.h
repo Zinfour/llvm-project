@@ -2852,12 +2852,6 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   // tasking, thus safe to reap
 #if KMP_MOLDABILITY
   kmp_moldable_task_team_t *th_moldable_task_team; // Moldable task team struct
-  kmp_taskdata_t *th_moldable_current_task; // Innermost Task being executed
-  kmp_uint8 th_moldable_task_state; // alternating 0/1 for task team identification
-  kmp_uint8 *th_moldable_task_state_memo_stack; // Stack holding memos of th_task_state
-  // at nested levels
-  kmp_uint32 th_moldable_task_state_top; // Top element of th_task_state_memo_stack
-  kmp_uint32 th_moldable_task_state_stack_sz; // Size of th_task_state_memo_stack
   kmp_uint32 th_moldable_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
 
