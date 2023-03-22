@@ -1145,6 +1145,14 @@ void __kmp_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
                   "team %p, new task_team = NULL\n",
                   global_tid, this_thr->th.th_task_team, this_thr->th.th_team));
     this_thr->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+    KMP_DEBUG_ASSERT(
+        this_thr->th.th_moldable_task_team ==
+        this_thr->th.th_team->t.t_moldable_task_team[this_thr->th.th_task_state]);
+    KMP_DEBUG_ASSERT(serial_team->t.t_moldable_task_team[this_thr->th.th_task_state] ==
+                      NULL);
+    this_thr->th.th_moldable_task_team = NULL;
+#endif
   }
 
   kmp_proc_bind_t proc_bind = this_thr->th.th_set_proc_bind;
@@ -1979,6 +1987,10 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     if (__kmp_tasking_mode != tskm_immediate_exec) {
       KMP_DEBUG_ASSERT(master_th->th.th_task_team ==
                        parent_team->t.t_task_team[master_th->th.th_task_state]);
+#if KMP_MOLDABILITY
+      KMP_DEBUG_ASSERT(master_th->th.th_moldable_task_team ==
+                       parent_team->t.t_moldable_task_team[master_th->th.th_task_state]);
+#endif
     }
 #endif
 
@@ -2176,6 +2188,10 @@ int __kmp_fork_call(ident_t *loc, int gtid,
       // team, it should be NULL.
       KMP_DEBUG_ASSERT(master_th->th.th_task_team ==
                        parent_team->t.t_task_team[master_th->th.th_task_state]);
+#if KMP_MOLDABILITY
+      KMP_DEBUG_ASSERT(master_th->th.th_moldable_task_team ==
+                       parent_team->t.t_moldable_task_team[master_th->th.th_task_state]);
+#endif
       KA_TRACE(20, ("__kmp_fork_call: Primary T#%d pushing task_team %p / team "
                     "%p, new task_team %p / team %p\n",
                     __kmp_gtid_from_thread(master_th),
@@ -2226,6 +2242,10 @@ int __kmp_fork_call(ident_t *loc, int gtid,
 #if !KMP_NESTED_HOT_TEAMS
       KMP_DEBUG_ASSERT((master_th->th.th_task_team == NULL) ||
                        (team == root->r.r_hot_team));
+#if KMP_MOLDABILITY
+      KMP_DEBUG_ASSERT((master_th->th.th_moldable_task_team == NULL) ||
+                       (team == root->r.r_hot_team));
+#endif
 #endif
     }
 
@@ -2438,6 +2458,10 @@ void __kmp_join_call(ident_t *loc, int gtid
                   master_th->th.th_task_team));
     KMP_DEBUG_ASSERT(master_th->th.th_task_team ==
                      team->t.t_task_team[master_th->th.th_task_state]);
+#if KMP_MOLDABILITY
+    KMP_DEBUG_ASSERT(master_th->th.th_moldable_task_team ==
+                     team->t.t_moldable_task_team[master_th->th.th_task_state]);
+#endif
   }
 #endif
 
@@ -2707,6 +2731,10 @@ void __kmp_join_call(ident_t *loc, int gtid
     // Copy the task team from the parent team to the primary thread
     master_th->th.th_task_team =
         parent_team->t.t_task_team[master_th->th.th_task_state];
+#if KMP_MOLDABILITY
+    master_th->th.th_moldable_task_team =
+        parent_team->t.t_moldable_task_team[master_th->th.th_task_state];
+#endif
     KA_TRACE(20,
              ("__kmp_join_call: Primary T#%d restoring task_team %p, team %p\n",
               __kmp_gtid_from_thread(master_th), master_th->th.th_task_team,
@@ -2820,6 +2848,9 @@ void __kmp_set_num_threads(int new_nth, int gtid) {
         // When decreasing team size, threads no longer in the team should unref
         // task team.
         hot_team->t.t_threads[f]->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+        hot_team->t.t_threads[f]->th.th_moldable_task_team = NULL;
+#endif
       }
       __kmp_free_thread(hot_team->t.t_threads[f]);
       hot_team->t.t_threads[f] = NULL;
@@ -5322,6 +5353,9 @@ __kmp_allocate_team(kmp_root_t *root, int new_nproc, int max_nproc,
             // When decreasing team size, threads no longer in the team should
             // unref task team.
             team->t.t_threads[f]->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+            team->t.t_threads[f]->th.th_moldable_task_team = NULL;
+#endif
           }
           __kmp_free_thread(team->t.t_threads[f]);
           team->t.t_threads[f] = NULL;
@@ -5792,6 +5826,9 @@ void __kmp_free_team(kmp_root_t *root,
           for (f = 0; f < team->t.t_nproc; ++f) { // threads unref task teams
             KMP_DEBUG_ASSERT(team->t.t_threads[f]);
             team->t.t_threads[f]->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+            team->t.t_threads[f]->th.th_moldable_task_team = NULL;
+#endif
           }
           KA_TRACE(
               20,
@@ -6169,6 +6206,9 @@ void *__kmp_launch_thread(kmp_info_t *this_thr) {
 #endif
 
   this_thr->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+  this_thr->th.th_moldable_task_team = NULL;
+#endif
   /* run the destructors for the threadprivate data for this thread */
   __kmp_common_destroy_gtid(gtid);
 
@@ -6731,6 +6771,9 @@ void __kmp_internal_end_thread(int gtid_req) {
 
       if (gtid >= 0) {
         __kmp_threads[gtid]->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+        __kmp_threads[gtid]->th.th_moldable_task_team = NULL;
+#endif
       }
 
       KA_TRACE(10,

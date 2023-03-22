@@ -1589,6 +1589,10 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
       // 1 indicates setup the current team regardless of nthreads
       __kmp_task_team_setup(thread, team, 1);
       thread->th.th_task_team = team->t.t_task_team[thread->th.th_task_state];
+#if KMP_MOLDABILITY
+      __kmp_moldable_task_team_setup(thread, team, 1);
+      thread->th.th_moldable_task_team = team->t.t_moldable_task_team[thread->th.th_task_state];
+#endif
     }
     kmp_task_team_t *task_team = thread->th.th_task_team;
 
@@ -2290,6 +2294,9 @@ static kmp_int32 __kmpc_omp_taskwait_template(ident_t *loc_ref, kmp_int32 gtid,
   kmp_taskdata_t *taskdata = nullptr;
   kmp_info_t *thread;
   int thread_finished = FALSE;
+#if KMP_MOLDABILITY
+  int thread_finished_m = FALSE;
+#endif
   KMP_SET_THREAD_STATE_BLOCK(TASKWAIT);
 
   KA_TRACE(10, ("__kmpc_omp_taskwait(enter): T#%d loc=%p\n", gtid, loc_ref));
@@ -2365,7 +2372,7 @@ static kmp_int32 __kmpc_omp_taskwait_template(ident_t *loc_ref, kmp_int32 gtid,
         }
         if (thread->th.th_moldable_task_team->mtt.mtt_threads_data != NULL) {
           flag.execute_moldable_tasks(thread, gtid, FALSE,
-                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
+                            &thread_finished_m USE_ITT_BUILD_ARG(itt_sync_obj),
                             __kmp_task_stealing_constraint);
         }
 #else
@@ -2956,6 +2963,9 @@ void __kmpc_end_taskgroup(ident_t *loc, int gtid) {
   kmp_taskdata_t *taskdata = thread->th.th_current_task;
   kmp_taskgroup_t *taskgroup = taskdata->td_taskgroup;
   int thread_finished = FALSE;
+#if KMP_MOLDABILITY
+  int thread_finished_m = FALSE;
+#endif
 
 #if OMPT_SUPPORT && OMPT_OPTIONAL
   kmp_team_t *team;
@@ -3014,7 +3024,7 @@ void __kmpc_end_taskgroup(ident_t *loc, int gtid) {
         }
         if (thread->th.th_moldable_task_team->mtt.mtt_threads_data != NULL) {
           flag.execute_moldable_tasks(thread, gtid, FALSE,
-                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
+                            &thread_finished_m USE_ITT_BUILD_ARG(itt_sync_obj),
                             __kmp_task_stealing_constraint);
         }
 #else
@@ -3292,13 +3302,13 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
 
   thread_data = &moldable_task_team->mtt.mtt_threads_data[__kmp_tid_from_gtid(gtid)];
 
-  KA_TRACE(10, ("__kmp_remove_my_task(enter): T#%d ntasks=%d head=%u tail=%u\n",
+  KA_TRACE(10, ("__kmp_remove_my_moldable_task(enter): T#%d ntasks=%d head=%u tail=%u\n",
                 gtid, thread_data->td.td_deque_ntasks,
                 thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
 
   if (TCR_4(thread_data->td.td_deque_ntasks) == 0) {
     KA_TRACE(10,
-             ("__kmp_remove_my_task(exit #1): T#%d No tasks to remove: "
+             ("__kmp_remove_my_moldable_task(exit #1): T#%d No tasks to remove: "
               "ntasks=%d head=%u tail=%u\n",
               gtid, thread_data->td.td_deque_ntasks,
               thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
@@ -3310,7 +3320,7 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   if (TCR_4(thread_data->td.td_deque_ntasks) == 0) {
     __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
     KA_TRACE(10,
-             ("__kmp_remove_my_task(exit #2): T#%d No tasks to remove: "
+             ("__kmp_remove_my_moldable_task(exit #2): T#%d No tasks to remove: "
               "ntasks=%d head=%u tail=%u\n",
               gtid, thread_data->td.td_deque_ntasks,
               thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
@@ -3326,7 +3336,7 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
     // The TSC does not allow to steal victim task
     __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
     KA_TRACE(10,
-             ("__kmp_remove_my_task(exit #3): T#%d TSC blocks tail task: "
+             ("__kmp_remove_my_moldable_task(exit #3): T#%d TSC blocks tail task: "
               "ntasks=%d head=%u tail=%u\n",
               gtid, thread_data->td.td_deque_ntasks,
               thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
@@ -3338,7 +3348,7 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
 
   __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
 
-  KA_TRACE(10, ("__kmp_remove_my_task(exit #4): T#%d task %p removed: "
+  KA_TRACE(10, ("__kmp_remove_my_moldable_task(exit #4): T#%d task %p removed: "
                 "ntasks=%d head=%u tail=%u\n",
                 gtid, taskdata, thread_data->td.td_deque_ntasks,
                 thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
@@ -3874,7 +3884,7 @@ static inline int __kmp_execute_moldable_tasks_template(
   if (moldable_task_team == NULL || current_task == NULL)
     return FALSE;
 
-  KA_TRACE(15, ("__kmp_execute_tasks_template(enter): T#%d final_spin=%d "
+  KA_TRACE(15, ("__kmp_execute_moldable_tasks_template(enter): T#%d final_spin=%d "
                 "*thread_finished=%d\n",
                 gtid, final_spin, *thread_finished));
 
@@ -4005,7 +4015,7 @@ static inline int __kmp_execute_moldable_tasks_template(
       if (flag == NULL || (!final_spin && flag->done_check())) {
         KA_TRACE(
             15,
-            ("__kmp_execute_tasks_template: T#%d spin condition satisfied\n",
+            ("__kmp_execute_moldable_tasks_template: T#%d spin condition satisfied\n",
              gtid));
         return TRUE;
       }
@@ -4016,7 +4026,7 @@ static inline int __kmp_execute_moldable_tasks_template(
       // If execution of a stolen task results in more tasks being placed on our
       // run queue, reset use_own_tasks
       if (!use_own_tasks && TCR_4(threads_data[tid].td.td_deque_ntasks) != 0) {
-        KA_TRACE(20, ("__kmp_execute_tasks_template: T#%d stolen task spawned "
+        KA_TRACE(20, ("__kmp_execute_moldable_tasks_template: T#%d stolen task spawned "
                       "other tasks, restart\n",
                       gtid));
         use_own_tasks = 1;
@@ -4037,7 +4047,7 @@ static inline int __kmp_execute_moldable_tasks_template(
         kmp_int32 count = -1 +
 #endif
             KMP_ATOMIC_DEC(unfinished_threads);
-        KA_TRACE(20, ("__kmp_execute_tasks_template: T#%d dec "
+        KA_TRACE(20, ("__kmp_execute_moldable_tasks_template: T#%d dec "
                       "unfinished_threads to %d moldable_task_team=%p\n",
                       gtid, count, moldable_task_team));
         *thread_finished = TRUE;
@@ -4051,7 +4061,7 @@ static inline int __kmp_execute_moldable_tasks_template(
       if (flag != NULL && flag->done_check()) {
         KA_TRACE(
             15,
-            ("__kmp_execute_tasks_template: T#%d spin condition satisfied\n",
+            ("__kmp_execute_moldable_tasks_template: T#%d spin condition satisfied\n",
              gtid));
         return TRUE;
       }
@@ -4061,7 +4071,7 @@ static inline int __kmp_execute_moldable_tasks_template(
     // there are no more tasks; bail out
     if (thread->th.th_moldable_task_team == NULL) {
       KA_TRACE(15,
-               ("__kmp_execute_tasks_template: T#%d no more tasks\n", gtid));
+               ("__kmp_execute_moldable_tasks_template: T#%d no more tasks\n", gtid));
       return FALSE;
     }
 
@@ -4072,7 +4082,7 @@ static inline int __kmp_execute_moldable_tasks_template(
     // task so it is in another code path that has the same check.
     if (flag == NULL || (!final_spin && flag->done_check())) {
       KA_TRACE(15,
-               ("__kmp_execute_tasks_template: T#%d spin condition satisfied\n",
+               ("__kmp_execute_moldable_tasks_template: T#%d spin condition satisfied\n",
                 gtid));
       return TRUE;
     }
@@ -4084,7 +4094,7 @@ static inline int __kmp_execute_moldable_tasks_template(
       use_own_tasks = 1;
     else {
       KA_TRACE(15,
-               ("__kmp_execute_tasks_template: T#%d can't find work\n", gtid));
+               ("__kmp_execute_moldable_tasks_template: T#%d can't find work\n", gtid));
       return FALSE;
     }
   }

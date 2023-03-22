@@ -2261,6 +2261,11 @@ void __kmp_join_barrier(int gtid) {
     if (this_thr->th.th_task_team)
       KMP_DEBUG_ASSERT(this_thr->th.th_task_team ==
                        team->t.t_task_team[this_thr->th.th_task_state]);
+#if KMP_MOLDABILITY
+    if (this_thr->th.th_moldable_task_team)
+      KMP_DEBUG_ASSERT(this_thr->th.th_moldable_task_team ==
+                       team->t.t_moldable_task_team[this_thr->th.th_task_state]);
+#endif
   }
 #endif /* KMP_DEBUG */
 
@@ -2549,6 +2554,9 @@ void __kmp_fork_barrier(int gtid, int tid) {
   // Early exit for reaping threads releasing forkjoin barrier
   if (TCR_4(__kmp_global.g.g_done)) {
     this_thr->th.th_task_team = NULL;
+#if KMP_MOLDABILITY
+    this_thr->th.th_moldable_task_team = NULL;
+#endif
 
 #if USE_ITT_BUILD && USE_ITT_NOTIFY
     if (__itt_sync_create_ptr || KMP_ITT_DEBUG) {
