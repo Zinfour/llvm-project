@@ -1860,9 +1860,6 @@ static int __kmp_barrier_template(enum barrier_type bt, int gtid, int is_split,
     if (KMP_MASTER_TID(tid) && __kmp_tasking_mode != tskm_immediate_exec) {
       // use 0 to only setup the current team if nthreads > 1
       __kmp_task_team_setup(this_thr, team, 0);
-#if KMP_MOLDABILITY
-      __kmp_moldable_task_team_setup(this_thr, team, 0);
-#endif
     }
     if (cancellable) {
       cancelled = __kmp_linear_barrier_gather_cancellable(
@@ -1906,9 +1903,6 @@ static int __kmp_barrier_template(enum barrier_type bt, int gtid, int is_split,
       status = 0;
       if (__kmp_tasking_mode != tskm_immediate_exec && !cancelled) {
         __kmp_task_team_wait(this_thr, team USE_ITT_BUILD_ARG(itt_sync_obj));
-#if KMP_MOLDABILITY
-        __kmp_moldable_task_team_wait(this_thr, team USE_ITT_BUILD_ARG(itt_sync_obj));
-#endif
       }
 #if USE_DEBUGGER
       // Let the debugger know: All threads are arrived and starting leaving the
@@ -2021,9 +2015,6 @@ static int __kmp_barrier_template(enum barrier_type bt, int gtid, int is_split,
       }
       if (__kmp_tasking_mode != tskm_immediate_exec && !cancelled) {
         __kmp_task_team_sync(this_thr, team);
-#if KMP_MOLDABILITY
-        __kmp_moldable_task_team_sync(this_thr, team);
-#endif
       }
     }
 
@@ -2052,10 +2043,6 @@ static int __kmp_barrier_template(enum barrier_type bt, int gtid, int is_split,
                 TRUE);
         __kmp_task_team_wait(this_thr, team USE_ITT_BUILD_ARG(itt_sync_obj));
         __kmp_task_team_setup(this_thr, team, 0);
-#if KMP_MOLDABILITY
-        __kmp_moldable_task_team_wait(this_thr, team USE_ITT_BUILD_ARG(itt_sync_obj));
-        __kmp_moldable_task_team_setup(this_thr, team, 0);
-#endif
 #if USE_ITT_BUILD
         if (__itt_sync_create_ptr || KMP_ITT_DEBUG)
           __kmp_itt_barrier_finished(gtid, itt_sync_obj);
@@ -2162,9 +2149,6 @@ void __kmp_end_split_barrier(enum barrier_type bt, int gtid) {
       }
       if (__kmp_tasking_mode != tskm_immediate_exec) {
         __kmp_task_team_sync(this_thr, team);
-#if KMP_MOLDABILITY
-        __kmp_moldable_task_team_sync(this_thr, team);
-#endif
       } // if
     }
   }
@@ -2261,11 +2245,6 @@ void __kmp_join_barrier(int gtid) {
     if (this_thr->th.th_task_team)
       KMP_DEBUG_ASSERT(this_thr->th.th_task_team ==
                        team->t.t_task_team[this_thr->th.th_task_state]);
-#if KMP_MOLDABILITY
-    if (this_thr->th.th_moldable_task_team)
-      KMP_DEBUG_ASSERT(this_thr->th.th_moldable_task_team ==
-                       team->t.t_moldable_task_team[this_thr->th.th_task_state]);
-#endif
   }
 #endif /* KMP_DEBUG */
 
@@ -2326,9 +2305,6 @@ void __kmp_join_barrier(int gtid) {
   if (KMP_MASTER_TID(tid)) {
     if (__kmp_tasking_mode != tskm_immediate_exec) {
       __kmp_task_team_wait(this_thr, team USE_ITT_BUILD_ARG(itt_sync_obj));
-#if KMP_MOLDABILITY
-      __kmp_moldable_task_team_wait(this_thr, team USE_ITT_BUILD_ARG(itt_sync_obj));
-#endif
     }
     if (__kmp_display_affinity) {
       KMP_CHECK_UPDATE(team->t.t_display_affinity, 0);
@@ -2466,9 +2442,6 @@ void __kmp_fork_barrier(int gtid, int tid) {
     if (__kmp_tasking_mode != tskm_immediate_exec) {
       // 0 indicates setup current task team if nthreads > 1
       __kmp_task_team_setup(this_thr, team, 0);
-#if KMP_MOLDABILITY
-      __kmp_moldable_task_team_setup(this_thr, team, 0);
-#endif
     }
 
     /* The primary thread may have changed its blocktime between join barrier
@@ -2554,9 +2527,6 @@ void __kmp_fork_barrier(int gtid, int tid) {
   // Early exit for reaping threads releasing forkjoin barrier
   if (TCR_4(__kmp_global.g.g_done)) {
     this_thr->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-    this_thr->th.th_moldable_task_team = NULL;
-#endif
 
 #if USE_ITT_BUILD && USE_ITT_NOTIFY
     if (__itt_sync_create_ptr || KMP_ITT_DEBUG) {
@@ -2605,9 +2575,6 @@ void __kmp_fork_barrier(int gtid, int tid) {
 
   if (__kmp_tasking_mode != tskm_immediate_exec) {
     __kmp_task_team_sync(this_thr, team);
-#if KMP_MOLDABILITY
-    __kmp_moldable_task_team_sync(this_thr, team);
-#endif
   }
 
 #if KMP_AFFINITY_SUPPORTED

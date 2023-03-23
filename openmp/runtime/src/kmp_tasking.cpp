@@ -35,12 +35,6 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
                                            kmp_task_team_t *task_team);
 static void __kmp_bottom_half_finish_proxy(kmp_int32 gtid, kmp_task_t *ptask);
 
-#if KMP_MOLDABILITY
-static void __kmp_enable_moldable_tasking(kmp_moldable_task_team_t *moldable_task_team,
-                                 kmp_info_t *this_thr);
-static int __kmp_realloc_moldable_task_threads_data(kmp_info_t *thread,
-                                           kmp_moldable_task_team_t *task_team);
-#endif
 #ifdef BUILD_TIED_TASK_STACK
 
 //  __kmp_trace_task_stack: print the tied tasks from the task stack in order
@@ -468,159 +462,10 @@ static kmp_int32 __kmp_push_priority_task(kmp_int32 gtid, kmp_info_t *thread,
   return TASK_SUCCESSFULLY_PUSHED;
 }
 
-#if KMP_MOLDABILITY
-static bool __kmp_give_moldable_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
-                            kmp_int32 pass);
-static kmp_int32 __kmp_push_moldable_task(kmp_int32 gtid, kmp_task_t *task) {
-  kmp_info_t *thread = __kmp_threads[gtid];
-  kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-  KMP_DEBUG_ASSERT(taskdata->td_moldable);
-
-
-  // If we encounter a hidden helper task, and the current thread is not a
-  // hidden helper thread, we have to give the task to any hidden helper thread
-  // starting from its shadow one.
-  if (UNLIKELY(taskdata->td_flags.hidden_helper &&
-              !KMP_HIDDEN_HELPER_THREAD(gtid))) {
-    KMP_DEBUG_ASSERT2(false, "moldable hidden helper tasks are not implemented");
-    // kmp_int32 shadow_gtid = KMP_GTID_TO_SHADOW_GTID(gtid);
-    // __kmpc_give_task(task, __kmp_tid_from_gtid(shadow_gtid));
-    // // Signal the hidden helper threads.
-    // __kmp_hidden_helper_worker_thread_signal();
-    // return TASK_SUCCESSFULLY_PUSHED;
-  }
-
-  kmp_moldable_task_team_t *moldable_task_team = thread->th.th_moldable_task_team;
-  kmp_int32 tid = __kmp_tid_from_gtid(gtid);
-  kmp_thread_data_t *thread_data;
-
-  if (UNLIKELY(taskdata->td_flags.tiedness == TASK_UNTIED)) {
-    // untied task needs to increment counter so that the task structure is not
-    // freed prematurely
-    kmp_int32 counter = 1 + KMP_ATOMIC_INC(&taskdata->td_untied_count);
-    KMP_DEBUG_USE_VAR(counter);
-    KA_TRACE(
-        20,
-        ("__kmp_push_task: T#%d untied_count (%d) incremented for task %p\n",
-          gtid, counter, taskdata));
-  }
-
-  // The first check avoids building task_team thread data if serialized
-  if (UNLIKELY(taskdata->td_flags.task_serial)) {
-    KA_TRACE(20, ("__kmp_push_moldable_task: T#%d team serialized; returning "
-                  "TASK_NOT_PUSHED for task %p\n",
-                  gtid, taskdata));
-    return TASK_NOT_PUSHED;
-  }
-
-  // Now that serialized tasks have returned, we can assume that we are not in
-  // immediate exec mode
-  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
-  if (UNLIKELY(!KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team))) {
-    __kmp_enable_moldable_tasking(moldable_task_team, thread);
-  }
-  KMP_DEBUG_ASSERT(TCR_4(moldable_task_team->mtt.mtt_found_tasks) == TRUE);
-  KMP_DEBUG_ASSERT(TCR_PTR(moldable_task_team->mtt.mtt_threads_data) != NULL);
-
-  if (taskdata->td_flags.priority_specified && task->data2.priority > 0 &&
-      __kmp_max_task_priority > 0) {
-    KMP_DEBUG_ASSERT2(false, "moldable priority tasks are not implemented");
-    // int pri = KMP_MIN(task->data2.priority, __kmp_max_task_priority);
-    // return __kmp_push_priority_task(gtid, thread, taskdata, task_team, pri);
-  }
-
-  int k = __kmp_get_random(thread) % moldable_task_team->mtt.mtt_nproc;
-
-
-  kmp_info_t *other_thread = moldable_task_team->mtt.mtt_threads_data[k].td.td_thr;
-
-  if (!__kmp_give_moldable_task(other_thread, k, task, INT32_MAX)) {
-
-    KA_TRACE(1, ("giving thread to self\n"));
-    // Find tasking deque specific to encountering thread
-    thread_data = &moldable_task_team->mtt.mtt_threads_data[tid];
-
-
-    // No lock needed since only owner can allocate. If the task is hidden_helper,
-    // we don't need it either because we have initialized the dequeue for hidden
-    // helper thread data.
-    if (UNLIKELY(thread_data->td.td_deque == NULL)) {
-      __kmp_alloc_task_deque(thread, thread_data);
-    }
-
-    int locked = 0;
-    // Check if deque is full
-    if (TCR_4(thread_data->td.td_deque_ntasks) >=
-        TASK_DEQUE_SIZE(thread_data->td)) {
-      if (__kmp_enable_task_throttling &&
-          __kmp_task_is_allowed(gtid, __kmp_task_stealing_constraint, taskdata,
-                                thread->th.th_current_task)) {
-        KA_TRACE(20, ("__kmp_push_task: T#%d deque is full; returning "
-                      "TASK_NOT_PUSHED for task %p\n",
-                      gtid, taskdata));
-        return TASK_NOT_PUSHED;
-      } else {
-        __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
-        locked = 1;
-        if (TCR_4(thread_data->td.td_deque_ntasks) >=
-            TASK_DEQUE_SIZE(thread_data->td)) {
-          // expand deque to push the task which is not allowed to execute
-          __kmp_realloc_task_deque(thread, thread_data);
-        }
-      }
-    }
-    // Lock the deque for the task push operation
-    if (!locked) {
-      __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
-      // Need to recheck as we can get a proxy task from thread outside of OpenMP
-      if (TCR_4(thread_data->td.td_deque_ntasks) >=
-          TASK_DEQUE_SIZE(thread_data->td)) {
-        if (__kmp_enable_task_throttling &&
-            __kmp_task_is_allowed(gtid, __kmp_task_stealing_constraint, taskdata,
-                                  thread->th.th_current_task)) {
-          __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-          KA_TRACE(20, ("__kmp_push_task: T#%d deque is full on 2nd check; "
-                        "returning TASK_NOT_PUSHED for task %p\n",
-                        gtid, taskdata));
-          return TASK_NOT_PUSHED;
-        } else {
-          // expand deque to push the task which is not allowed to execute
-          __kmp_realloc_task_deque(thread, thread_data);
-        }
-      }
-    }
-    // Must have room since no thread can add tasks but calling thread
-    KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_deque_ntasks) <
-                    TASK_DEQUE_SIZE(thread_data->td));
-
-    thread_data->td.td_deque[thread_data->td.td_deque_tail] =
-        taskdata; // Push taskdata
-    // Wrap index.
-    thread_data->td.td_deque_tail =
-        (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
-    TCW_4(thread_data->td.td_deque_ntasks,
-          TCR_4(thread_data->td.td_deque_ntasks) + 1); // Adjust task count
-    KMP_FSYNC_RELEASING(thread->th.th_current_task); // releasing self
-    KMP_FSYNC_RELEASING(taskdata); // releasing child
-    KA_TRACE(20, ("__kmp_push_task: T#%d returning TASK_SUCCESSFULLY_PUSHED: "
-                  "task=%p ntasks=%d head=%u tail=%u\n",
-                  gtid, taskdata, thread_data->td.td_deque_ntasks,
-                  thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-
-    __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-  }
-
-  return TASK_SUCCESSFULLY_PUSHED;
-}
-#endif
-
 //  __kmp_push_task: Add a task to the thread's deque
 static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   kmp_info_t *thread = __kmp_threads[gtid];
   kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-#if KMP_MOLDABILITY
-  KMP_DEBUG_ASSERT(!taskdata->td_moldable);
-#endif
   // If we encounter a hidden helper task, and the current thread is not a
   // hidden helper thread, we have to give the task to any hidden helper thread
   // starting from its shadow one.
@@ -1589,10 +1434,6 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
       // 1 indicates setup the current team regardless of nthreads
       __kmp_task_team_setup(thread, team, 1);
       thread->th.th_task_team = team->t.t_task_team[thread->th.th_task_state];
-#if KMP_MOLDABILITY
-      __kmp_moldable_task_team_setup(thread, team, 1);
-      thread->th.th_moldable_task_team = team->t.t_moldable_task_team[thread->th.th_task_state];
-#endif
     }
     kmp_task_team_t *task_team = thread->th.th_task_team;
 
@@ -1677,9 +1518,6 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
 
   taskdata->td_flags = *flags;
   taskdata->td_task_team = thread->th.th_task_team;
-#if KMP_MOLDABILITY
-  taskdata->td_moldable_task_team = thread->th.th_moldable_task_team;
-#endif
   taskdata->td_size_alloc = shareds_offset + sizeof_shareds;
   taskdata->td_flags.tasktype = TASK_EXPLICIT;
   // If it is hidden helper task, we need to set the team and task team
@@ -2095,12 +1933,7 @@ kmp_int32 __kmpc_omp_task_parts(ident_t *loc_ref, kmp_int32 gtid,
 
   /* Should we execute the new task or queue it? For now, let's just always try
      to queue it.  If the queue fills up, then we'll execute it.  */
-#if KMP_MOLDABILITY
-  if ((new_taskdata->td_moldable ? __kmp_push_moldable_task(gtid, new_task)
-       : __kmp_push_task(gtid, new_task)) == TASK_NOT_PUSHED) // if cannot defer
-#else
   if (__kmp_push_task(gtid, new_task) == TASK_NOT_PUSHED) // if cannot defer
-#endif
   { // Execute this task immediately
     kmp_taskdata_t *current_task = __kmp_threads[gtid]->th.th_current_task;
     new_taskdata->td_flags.task_serial = 1;
@@ -2137,14 +1970,8 @@ kmp_int32 __kmp_omp_task(kmp_int32 gtid, kmp_task_t *new_task,
   kmp_taskdata_t *new_taskdata = KMP_TASK_TO_TASKDATA(new_task);
   /* Should we execute the new task or queue it? For now, let's just always try
      to queue it.  If the queue fills up, then we'll execute it.  */
-#if KMP_MOLDABILITY
-  if (new_taskdata->td_flags.proxy == TASK_PROXY ||
-      (new_taskdata->td_moldable ? __kmp_push_moldable_task(gtid, new_task)
-       : __kmp_push_task(gtid, new_task)) == TASK_NOT_PUSHED) // if cannot defer
-#else
   if (new_taskdata->td_flags.proxy == TASK_PROXY ||
       __kmp_push_task(gtid, new_task) == TASK_NOT_PUSHED) // if cannot defer
-#endif
   { // Execute this task immediately
     kmp_taskdata_t *current_task = __kmp_threads[gtid]->th.th_current_task;
     if (serialize_immediate)
@@ -2294,9 +2121,6 @@ static kmp_int32 __kmpc_omp_taskwait_template(ident_t *loc_ref, kmp_int32 gtid,
   kmp_taskdata_t *taskdata = nullptr;
   kmp_info_t *thread;
   int thread_finished = FALSE;
-#if KMP_MOLDABILITY
-  int thread_finished_m = FALSE;
-#endif
   KMP_SET_THREAD_STATE_BLOCK(TASKWAIT);
 
   KA_TRACE(10, ("__kmpc_omp_taskwait(enter): T#%d loc=%p\n", gtid, loc_ref));
@@ -2364,22 +2188,9 @@ static kmp_int32 __kmpc_omp_taskwait_template(ident_t *loc_ref, kmp_int32 gtid,
                 &(taskdata->td_incomplete_child_tasks)),
           0U);
       while (KMP_ATOMIC_LD_ACQ(&taskdata->td_incomplete_child_tasks) != 0) {
-#if KMP_MOLDABILITY
-        if (thread->th.th_task_team->tt.tt_threads_data != NULL) {
-          flag.execute_tasks(thread, gtid, FALSE,
-                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
-                            __kmp_task_stealing_constraint);
-        }
-        if (thread->th.th_moldable_task_team->mtt.mtt_threads_data != NULL) {
-          flag.execute_moldable_tasks(thread, gtid, FALSE,
-                            &thread_finished_m USE_ITT_BUILD_ARG(itt_sync_obj),
-                            __kmp_task_stealing_constraint);
-        }
-#else
         flag.execute_tasks(thread, gtid, FALSE,
                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
                            __kmp_task_stealing_constraint);
-#endif
       }
     }
 #if USE_ITT_BUILD
@@ -2963,9 +2774,6 @@ void __kmpc_end_taskgroup(ident_t *loc, int gtid) {
   kmp_taskdata_t *taskdata = thread->th.th_current_task;
   kmp_taskgroup_t *taskgroup = taskdata->td_taskgroup;
   int thread_finished = FALSE;
-#if KMP_MOLDABILITY
-  int thread_finished_m = FALSE;
-#endif
 
 #if OMPT_SUPPORT && OMPT_OPTIONAL
   kmp_team_t *team;
@@ -3016,22 +2824,9 @@ void __kmpc_end_taskgroup(ident_t *loc, int gtid) {
       kmp_flag_32<false, false> flag(
           RCAST(std::atomic<kmp_uint32> *, &(taskgroup->count)), 0U);
       while (KMP_ATOMIC_LD_ACQ(&taskgroup->count) != 0) {
-#if KMP_MOLDABILITY
-        if (thread->th.th_task_team->tt.tt_threads_data != NULL) {
-          flag.execute_tasks(thread, gtid, FALSE,
-                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
-                            __kmp_task_stealing_constraint);
-        }
-        if (thread->th.th_moldable_task_team->mtt.mtt_threads_data != NULL) {
-          flag.execute_moldable_tasks(thread, gtid, FALSE,
-                            &thread_finished_m USE_ITT_BUILD_ARG(itt_sync_obj),
-                            __kmp_task_stealing_constraint);
-        }
-#else
         flag.execute_tasks(thread, gtid, FALSE,
                            &thread_finished USE_ITT_BUILD_ARG(itt_sync_obj),
                            __kmp_task_stealing_constraint);
-#endif
       }
     }
     taskdata->td_taskwait_thread = -taskdata->td_taskwait_thread; // end waiting
@@ -3284,79 +3079,6 @@ static kmp_task_t *__kmp_remove_my_task(kmp_info_t *thread, kmp_int32 gtid,
   task = KMP_TASKDATA_TO_TASK(taskdata);
   return task;
 }
-
-#if KMP_MOLDABILITY
-
-// __kmp_remove_my_task: remove a task from my own deque
-static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 gtid,
-                                        kmp_moldable_task_team_t *moldable_task_team,
-                                        kmp_int32 is_constrained) {
-  kmp_task_t *task;
-  kmp_taskdata_t *taskdata;
-  kmp_thread_data_t *thread_data;
-  kmp_uint32 tail;
-
-  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
-  KMP_DEBUG_ASSERT(moldable_task_team->mtt.mtt_threads_data !=
-                   NULL); // Caller should check this condition
-
-  thread_data = &moldable_task_team->mtt.mtt_threads_data[__kmp_tid_from_gtid(gtid)];
-
-  KA_TRACE(10, ("__kmp_remove_my_moldable_task(enter): T#%d ntasks=%d head=%u tail=%u\n",
-                gtid, thread_data->td.td_deque_ntasks,
-                thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-
-  if (TCR_4(thread_data->td.td_deque_ntasks) == 0) {
-    KA_TRACE(10,
-             ("__kmp_remove_my_moldable_task(exit #1): T#%d No tasks to remove: "
-              "ntasks=%d head=%u tail=%u\n",
-              gtid, thread_data->td.td_deque_ntasks,
-              thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-    return NULL;
-  }
-
-  __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
-
-  if (TCR_4(thread_data->td.td_deque_ntasks) == 0) {
-    __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-    KA_TRACE(10,
-             ("__kmp_remove_my_moldable_task(exit #2): T#%d No tasks to remove: "
-              "ntasks=%d head=%u tail=%u\n",
-              gtid, thread_data->td.td_deque_ntasks,
-              thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-    return NULL;
-  }
-
-  tail = (thread_data->td.td_deque_tail - 1) &
-         TASK_DEQUE_MASK(thread_data->td); // Wrap index.
-  taskdata = thread_data->td.td_deque[tail];
-
-  if (!__kmp_task_is_allowed(gtid, is_constrained, taskdata,
-                             thread->th.th_current_task)) {
-    // The TSC does not allow to steal victim task
-    __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-    KA_TRACE(10,
-             ("__kmp_remove_my_moldable_task(exit #3): T#%d TSC blocks tail task: "
-              "ntasks=%d head=%u tail=%u\n",
-              gtid, thread_data->td.td_deque_ntasks,
-              thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-    return NULL;
-  }
-
-  thread_data->td.td_deque_tail = tail;
-  TCW_4(thread_data->td.td_deque_ntasks, thread_data->td.td_deque_ntasks - 1);
-
-  __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-
-  KA_TRACE(10, ("__kmp_remove_my_moldable_task(exit #4): T#%d task %p removed: "
-                "ntasks=%d head=%u tail=%u\n",
-                gtid, taskdata, thread_data->td.td_deque_ntasks,
-                thread_data->td.td_deque_head, thread_data->td.td_deque_tail));
-
-  task = KMP_TASKDATA_TO_TASK(taskdata);
-  return task;
-}
-#endif
 
 // __kmp_steal_task: remove a task from another thread's deque
 // Assume that calling thread has already checked existence of
@@ -3625,7 +3347,22 @@ static inline int __kmp_execute_tasks_template(
         __kmp_itt_task_starting(itt_sync_obj);
       }
 #endif /* USE_ITT_BUILD && USE_ITT_NOTIFY */
-      __kmp_invoke_task(gtid, task, current_task);
+
+#if KMP_MOLDABILITY
+      if (KMP_TASK_TO_TASKDATA(task)->td_moldable) {
+
+        thread->th.th_moldable_invoke_routine = task->routine;
+
+        task->routine = __kmp_invoke_task_dummy;
+        
+        __kmp_invoke_task(gtid, task, current_task);
+
+        task->routine = thread->th.th_moldable_invoke_routine;
+        thread->th.th_moldable_invoke_routine = NULL;
+      } else
+#endif
+        __kmp_invoke_task(gtid, task, current_task);
+
 #if USE_ITT_BUILD
       if (itt_sync_obj != NULL)
         __kmp_itt_task_finished(itt_sync_obj);
@@ -3854,385 +3591,6 @@ static void __kmp_enable_tasking(kmp_task_team_t *task_team,
   KA_TRACE(10, ("__kmp_enable_tasking(exit): T#%d\n",
                 __kmp_gtid_from_thread(this_thr)));
 }
-#if KMP_MOLDABILITY
-// __kmp_execute_tasks_template: Choose and execute tasks until either the
-// condition is statisfied (return true) or there are none left (return false).
-//
-// final_spin is TRUE if this is the spin at the release barrier.
-// thread_finished indicates whether the thread is finished executing all
-// the tasks it has on its deque, and is at the release barrier.
-// spinner is the location on which to spin.
-// spinner == NULL means only execute a single task and return.
-// checker is the value to check to terminate the spin.
-template <class C>
-static inline int __kmp_execute_moldable_tasks_template(
-    kmp_info_t *thread, kmp_int32 gtid, C *flag, int final_spin,
-    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-    kmp_int32 is_constrained) {
-  kmp_moldable_task_team_t *moldable_task_team = thread->th.th_moldable_task_team;
-  kmp_thread_data_t *threads_data;
-  kmp_task_t *task;
-  // kmp_info_t *other_thread;
-  kmp_taskdata_t *current_task = thread->th.th_current_task;
-  std::atomic<kmp_int32> *unfinished_threads;
-  kmp_int32 nthreads, /*victim_tid = -2,*/ use_own_tasks = 1, /*new_victim = 0,*/
-                      tid = thread->th.th_info.ds.ds_tid;
-
-  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
-  KMP_DEBUG_ASSERT(thread == __kmp_threads[gtid]);
-
-  if (moldable_task_team == NULL || current_task == NULL)
-    return FALSE;
-
-  KA_TRACE(15, ("__kmp_execute_moldable_tasks_template(enter): T#%d final_spin=%d "
-                "*thread_finished=%d\n",
-                gtid, final_spin, *thread_finished));
-
-  thread->th.th_moldable_reap_state = KMP_NOT_SAFE_TO_REAP;
-  threads_data = (kmp_thread_data_t *)TCR_PTR(moldable_task_team->mtt.mtt_threads_data);
-
-  KMP_DEBUG_ASSERT(threads_data != NULL);
-
-  nthreads = moldable_task_team->mtt.mtt_nproc;
-  unfinished_threads = &(moldable_task_team->mtt.mtt_unfinished_threads);
-  KMP_DEBUG_ASSERT(nthreads > 1);
-  // KMP_DEBUG_ASSERT(nthreads > 1 || moldable_task_team->mtt.mtt_found_proxy_tasks ||
-  //                  moldable_task_team->mtt.mtt_hidden_helper_task_encountered);
-  KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
-
-  while (1) { // Outer loop keeps trying to find tasks in case of single thread
-    // getting tasks from target constructs
-    while (1) { // Inner loop to find a task and execute it
-      task = NULL;
-      // if (moldable_task_team->mtt.mtt_num_task_pri) { // get priority task first
-      //   task = __kmp_get_priority_task(gtid, moldable_task_team, is_constrained);
-      // }
-      if (task == NULL && use_own_tasks) { // check own queue next
-        task = __kmp_remove_my_moldable_task(thread, gtid, moldable_task_team, is_constrained);
-      }
-      // if ((task == NULL) && (nthreads > 1)) { // Steal a task finally
-      //   int asleep = 1;
-      //   use_own_tasks = 0;
-      //   // Try to steal from the last place I stole from successfully.
-      //   if (victim_tid == -2) { // haven't stolen anything yet
-      //     victim_tid = threads_data[tid].td.td_deque_last_stolen;
-      //     if (victim_tid !=
-      //         -1) // if we have a last stolen from victim, get the thread
-      //       other_thread = threads_data[victim_tid].td.td_thr;
-      //   }
-      //   if (victim_tid != -1) { // found last victim
-      //     asleep = 0;
-      //   } else if (!new_victim) { // no recent steals and we haven't already
-      //     // used a new victim; select a random thread
-      //     do { // Find a different thread to steal work from.
-      //       // Pick a random thread. Initial plan was to cycle through all the
-      //       // threads, and only return if we tried to steal from every thread,
-      //       // and failed.  Arch says that's not such a great idea.
-      //       victim_tid = __kmp_get_random(thread) % (nthreads - 1);
-      //       if (victim_tid >= tid) {
-      //         ++victim_tid; // Adjusts random distribution to exclude self
-      //       }
-      //       // Found a potential victim
-      //       other_thread = threads_data[victim_tid].td.td_thr;
-      //       // There is a slight chance that __kmp_enable_tasking() did not wake
-      //       // up all threads waiting at the barrier.  If victim is sleeping,
-      //       // then wake it up. Since we were going to pay the cache miss
-      //       // penalty for referencing another thread's kmp_info_t struct
-      //       // anyway,
-      //       // the check shouldn't cost too much performance at this point. In
-      //       // extra barrier mode, tasks do not sleep at the separate tasking
-      //       // barrier, so this isn't a problem.
-      //       asleep = 0;
-      //       if ((__kmp_tasking_mode == tskm_task_teams) &&
-      //           (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) &&
-      //           (TCR_PTR(CCAST(void *, other_thread->th.th_sleep_loc)) !=
-      //            NULL)) {
-      //         asleep = 1;
-      //         __kmp_null_resume_wrapper(other_thread);
-      //         // A sleeping thread should not have any tasks on it's queue.
-      //         // There is a slight possibility that it resumes, steals a task
-      //         // from another thread, which spawns more tasks, all in the time
-      //         // that it takes this thread to check => don't write an assertion
-      //         // that the victim's queue is empty.  Try stealing from a
-      //         // different thread.
-      //       }
-      //     } while (asleep);
-      //   }
-
-      //   if (!asleep) {
-      //     // We have a victim to try to steal from
-      //     task = __kmp_steal_task(other_thread, gtid, moldable_task_team,
-      //                             unfinished_threads, thread_finished,
-      //                             is_constrained);
-      //   }
-      //   if (task != NULL) { // set last stolen to victim
-      //     if (threads_data[tid].td.td_deque_last_stolen != victim_tid) {
-      //       threads_data[tid].td.td_deque_last_stolen = victim_tid;
-      //       // The pre-refactored code did not try more than 1 successful new
-      //       // vicitm, unless the last one generated more local tasks;
-      //       // new_victim keeps track of this
-      //       new_victim = 1;
-      //     }
-      //   } else { // No tasks found; unset last_stolen
-      //     KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen, -1);
-      //     victim_tid = -2; // no successful victim found
-      //   }
-      // }
-
-      if (task == NULL)
-        break; // break out of tasking loop
-
-// Found a task; execute it
-#if USE_ITT_BUILD && USE_ITT_NOTIFY
-      if (__itt_sync_create_ptr || KMP_ITT_DEBUG) {
-        if (itt_sync_obj == NULL) { // we are at fork barrier where we could not
-          // get the object reliably
-          itt_sync_obj = __kmp_itt_barrier_object(gtid, bs_forkjoin_barrier);
-        }
-        __kmp_itt_task_starting(itt_sync_obj);
-      }
-#endif /* USE_ITT_BUILD && USE_ITT_NOTIFY */
-
-        KMP_DEBUG_ASSERT2(!KMP_TASK_TO_TASKDATA(task)->td_flags.native, "moldable tasks do not support gcc compiled tasks yet")
-        thread->th.th_moldable_invoke_routine = task->routine;
-
-        task->routine = __kmp_invoke_task_dummy;
-        
-        __kmp_invoke_task(gtid, task, current_task);
-
-        task->routine = thread->th.th_moldable_invoke_routine;
-        thread->th.th_moldable_invoke_routine = NULL;
-
-#if USE_ITT_BUILD
-      if (itt_sync_obj != NULL)
-        __kmp_itt_task_finished(itt_sync_obj);
-#endif /* USE_ITT_BUILD */
-      // If this thread is only partway through the barrier and the condition is
-      // met, then return now, so that the barrier gather/release pattern can
-      // proceed. If this thread is in the last spin loop in the barrier,
-      // waiting to be released, we know that the termination condition will not
-      // be satisfied, so don't waste any cycles checking it.
-      if (flag == NULL || (!final_spin && flag->done_check())) {
-        KA_TRACE(
-            15,
-            ("__kmp_execute_moldable_tasks_template: T#%d spin condition satisfied\n",
-             gtid));
-        return TRUE;
-      }
-      if (thread->th.th_moldable_task_team == NULL) {
-        break;
-      }
-      KMP_YIELD(__kmp_library == library_throughput); // Yield before next task
-      // If execution of a stolen task results in more tasks being placed on our
-      // run queue, reset use_own_tasks
-      if (!use_own_tasks && TCR_4(threads_data[tid].td.td_deque_ntasks) != 0) {
-        KA_TRACE(20, ("__kmp_execute_moldable_tasks_template: T#%d stolen task spawned "
-                      "other tasks, restart\n",
-                      gtid));
-        use_own_tasks = 1;
-        // new_victim = 0;
-      }
-    }
-
-    // The task source has been exhausted. If in final spin loop of barrier,
-    // check if termination condition is satisfied. The work queue may be empty
-    // but there might be proxy tasks still executing.
-    if (final_spin &&
-        KMP_ATOMIC_LD_ACQ(&current_task->td_incomplete_child_tasks) == 0) {
-      // First, decrement the #unfinished threads, if that has not already been
-      // done.  This decrement might be to the spin location, and result in the
-      // termination condition being satisfied.
-      if (!*thread_finished) {
-#if KMP_DEBUG
-        kmp_int32 count = -1 +
-#endif
-            KMP_ATOMIC_DEC(unfinished_threads);
-        KA_TRACE(20, ("__kmp_execute_moldable_tasks_template: T#%d dec "
-                      "unfinished_threads to %d moldable_task_team=%p\n",
-                      gtid, count, moldable_task_team));
-        *thread_finished = TRUE;
-      }
-
-      // It is now unsafe to reference thread->th.th_team !!!
-      // Decrementing moldable_task_team->tt.tt_unfinished_threads can allow the primary
-      // thread to pass through the barrier, where it might reset each thread's
-      // th.th_team field for the next parallel region. If we can steal more
-      // work, we know that this has not happened yet.
-      if (flag != NULL && flag->done_check()) {
-        KA_TRACE(
-            15,
-            ("__kmp_execute_moldable_tasks_template: T#%d spin condition satisfied\n",
-             gtid));
-        return TRUE;
-      }
-    }
-
-    // If this thread's task team is NULL, primary thread has recognized that
-    // there are no more tasks; bail out
-    if (thread->th.th_moldable_task_team == NULL) {
-      KA_TRACE(15,
-               ("__kmp_execute_moldable_tasks_template: T#%d no more tasks\n", gtid));
-      return FALSE;
-    }
-
-    // Check the flag again to see if it has already done in case to be trapped
-    // into infinite loop when a if0 task depends on a hidden helper task
-    // outside any parallel region. Detached tasks are not impacted in this case
-    // because the only thread executing this function has to execute the proxy
-    // task so it is in another code path that has the same check.
-    if (flag == NULL || (!final_spin && flag->done_check())) {
-      KA_TRACE(15,
-               ("__kmp_execute_moldable_tasks_template: T#%d spin condition satisfied\n",
-                gtid));
-      return TRUE;
-    }
-
-    // We could be getting tasks from target constructs; if this is the only
-    // thread, keep trying to execute tasks from own queue
-    if (nthreads == 1 &&
-        KMP_ATOMIC_LD_ACQ(&current_task->td_incomplete_child_tasks))
-      use_own_tasks = 1;
-    else {
-      KA_TRACE(15,
-               ("__kmp_execute_moldable_tasks_template: T#%d can't find work\n", gtid));
-      return FALSE;
-    }
-  }
-}
-
-template <bool C, bool S>
-int __kmp_execute_moldable_tasks_32(
-    kmp_info_t *thread, kmp_int32 gtid, kmp_flag_32<C, S> *flag, int final_spin,
-    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-    kmp_int32 is_constrained) {
-  return __kmp_execute_moldable_tasks_template(
-      thread, gtid, flag, final_spin,
-      thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-}
-
-template <bool C, bool S>
-int __kmp_execute_moldable_tasks_64(
-    kmp_info_t *thread, kmp_int32 gtid, kmp_flag_64<C, S> *flag, int final_spin,
-    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-    kmp_int32 is_constrained) {
-  return __kmp_execute_moldable_tasks_template(
-      thread, gtid, flag, final_spin,
-      thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-}
-
-template <bool C, bool S>
-int __kmp_atomic_execute_moldable_tasks_64(
-    kmp_info_t *thread, kmp_int32 gtid, kmp_atomic_flag_64<C, S> *flag,
-    int final_spin, int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-    kmp_int32 is_constrained) {
-  return __kmp_execute_moldable_tasks_template(
-      thread, gtid, flag, final_spin,
-      thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-}
-
-int __kmp_execute_moldable_tasks_oncore(
-    kmp_info_t *thread, kmp_int32 gtid, kmp_flag_oncore *flag, int final_spin,
-    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-    kmp_int32 is_constrained) {
-  return __kmp_execute_moldable_tasks_template(
-      thread, gtid, flag, final_spin,
-      thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-}
-
-
-template int
-__kmp_execute_moldable_tasks_32<false, false>(kmp_info_t *, kmp_int32,
-                                     kmp_flag_32<false, false> *, int,
-                                     int *USE_ITT_BUILD_ARG(void *), kmp_int32);
-
-template int __kmp_execute_moldable_tasks_64<false, true>(kmp_info_t *, kmp_int32,
-                                                 kmp_flag_64<false, true> *,
-                                                 int,
-                                                 int *USE_ITT_BUILD_ARG(void *),
-                                                 kmp_int32);
-
-template int __kmp_execute_moldable_tasks_64<true, false>(kmp_info_t *, kmp_int32,
-                                                 kmp_flag_64<true, false> *,
-                                                 int,
-                                                 int *USE_ITT_BUILD_ARG(void *),
-                                                 kmp_int32);
-
-template int __kmp_atomic_execute_moldable_tasks_64<false, true>(
-    kmp_info_t *, kmp_int32, kmp_atomic_flag_64<false, true> *, int,
-    int *USE_ITT_BUILD_ARG(void *), kmp_int32);
-
-template int __kmp_atomic_execute_moldable_tasks_64<true, false>(
-    kmp_info_t *, kmp_int32, kmp_atomic_flag_64<true, false> *, int,
-    int *USE_ITT_BUILD_ARG(void *), kmp_int32);
-
-// __kmp_enable_tasking: Allocate task team and resume threads sleeping at the
-// next barrier so they can assist in executing enqueued tasks.
-// First thread in allocates the task team atomically.
-static void __kmp_enable_moldable_tasking(kmp_moldable_task_team_t *moldable_task_team,
-                                 kmp_info_t *this_thr) {
-  kmp_thread_data_t *threads_data;
-  int nthreads, i, is_init_thread;
-
-  KA_TRACE(10, ("__kmp_enable_tasking(enter): T#%d\n",
-                __kmp_gtid_from_thread(this_thr)));
-
-  KMP_DEBUG_ASSERT(moldable_task_team != NULL);
-  KMP_DEBUG_ASSERT(this_thr->th.th_team != NULL);
-
-  nthreads = moldable_task_team->mtt.mtt_nproc;
-  KMP_DEBUG_ASSERT(nthreads > 0);
-  KMP_DEBUG_ASSERT(nthreads == this_thr->th.th_team->t.t_nproc);
-
-  // Allocate or increase the size of threads_data if necessary
-  is_init_thread = __kmp_realloc_moldable_task_threads_data(this_thr, moldable_task_team);
-
-  if (!is_init_thread) {
-    // Some other thread already set up the array.
-    KA_TRACE(
-        20,
-        ("__kmp_enable_tasking(exit): T#%d: threads array already set up.\n",
-         __kmp_gtid_from_thread(this_thr)));
-    return;
-  }
-  threads_data = (kmp_thread_data_t *)TCR_PTR(moldable_task_team->mtt.mtt_threads_data);
-  KMP_DEBUG_ASSERT(threads_data != NULL);
-
-  if (__kmp_tasking_mode == tskm_task_teams &&
-      (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME)) {
-    // Release any threads sleeping at the barrier, so that they can steal
-    // tasks and execute them.  In extra barrier mode, tasks do not sleep
-    // at the separate tasking barrier, so this isn't a problem.
-    for (i = 0; i < nthreads; i++) {
-      void *sleep_loc;
-      kmp_info_t *thread = threads_data[i].td.td_thr;
-
-      if (i == this_thr->th.th_info.ds.ds_tid) {
-        continue;
-      }
-      // Since we haven't locked the thread's suspend mutex lock at this
-      // point, there is a small window where a thread might be putting
-      // itself to sleep, but hasn't set the th_sleep_loc field yet.
-      // To work around this, __kmp_execute_tasks_template() periodically checks
-      // see if other threads are sleeping (using the same random mechanism that
-      // is used for task stealing) and awakens them if they are.
-      if ((sleep_loc = TCR_PTR(CCAST(void *, thread->th.th_sleep_loc))) !=
-          NULL) {
-        KF_TRACE(50, ("__kmp_enable_tasking: T#%d waking up thread T#%d\n",
-                      __kmp_gtid_from_thread(this_thr),
-                      __kmp_gtid_from_thread(thread)));
-        __kmp_null_resume_wrapper(thread);
-      } else {
-        KF_TRACE(50, ("__kmp_enable_tasking: T#%d don't wake up thread T#%d\n",
-                      __kmp_gtid_from_thread(this_thr),
-                      __kmp_gtid_from_thread(thread)));
-      }
-    }
-  }
-
-  KA_TRACE(10, ("__kmp_enable_tasking(exit): T#%d\n",
-                __kmp_gtid_from_thread(this_thr)));
-}
-#endif
 
 /* // TODO: Check the comment consistency
  * Utility routines for "task teams".  A task team (kmp_task_t) is kind of
@@ -4427,117 +3785,6 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
   return is_init_thread;
 }
 
-#if KMP_MOLDABILITY
-
-// __kmp_realloc_task_threads_data:
-// Allocates a threads_data array for a task team, either by allocating an
-// initial array or enlarging an existing array.  Only the first thread to get
-// the lock allocs or enlarges the array and re-initializes the array elements.
-// That thread returns "TRUE", the rest return "FALSE".
-// Assumes that the new array size is given by task_team -> tt.tt_nproc.
-// The current size is given by task_team -> tt.tt_max_threads.
-static int __kmp_realloc_moldable_task_threads_data(kmp_info_t *thread,
-                                           kmp_moldable_task_team_t *moldable_task_team) {
-  kmp_thread_data_t **threads_data_p;
-  kmp_int32 nthreads, maxthreads;
-  int is_init_thread = FALSE;
-
-  if (TCR_4(moldable_task_team->mtt.mtt_found_tasks)) {
-    // Already reallocated and initialized.
-    return FALSE;
-  }
-
-  threads_data_p = &moldable_task_team->mtt.mtt_threads_data;
-  nthreads = moldable_task_team->mtt.mtt_nproc;
-  maxthreads = moldable_task_team->mtt.mtt_max_threads;
-
-  // All threads must lock when they encounter the first task of the implicit
-  // task region to make sure threads_data fields are (re)initialized before
-  // used.
-  __kmp_acquire_bootstrap_lock(&moldable_task_team->mtt.mtt_threads_lock);
-
-  if (!TCR_4(moldable_task_team->mtt.mtt_found_tasks)) {
-    // first thread to enable tasking
-    kmp_team_t *team = thread->th.th_team;
-    int i;
-
-    is_init_thread = TRUE;
-    if (maxthreads < nthreads) {
-
-      if (*threads_data_p != NULL) {
-        kmp_thread_data_t *old_data = *threads_data_p;
-        kmp_thread_data_t *new_data = NULL;
-
-        KE_TRACE(
-            10,
-            ("__kmp_realloc_task_threads_data: T#%d reallocating "
-             "threads data for task_team %p, new_size = %d, old_size = %d\n",
-             __kmp_gtid_from_thread(thread), moldable_task_team, nthreads, maxthreads));
-        // Reallocate threads_data to have more elements than current array
-        // Cannot use __kmp_thread_realloc() because threads not around for
-        // kmp_reap_task_team( ).  Note all new array entries are initialized
-        // to zero by __kmp_allocate().
-        new_data = (kmp_thread_data_t *)__kmp_allocate(
-            nthreads * sizeof(kmp_thread_data_t));
-        // copy old data to new data
-        KMP_MEMCPY_S((void *)new_data, nthreads * sizeof(kmp_thread_data_t),
-                     (void *)old_data, maxthreads * sizeof(kmp_thread_data_t));
-
-#ifdef BUILD_TIED_TASK_STACK
-        // GEH: Figure out if this is the right thing to do
-        for (i = maxthreads; i < nthreads; i++) {
-          kmp_thread_data_t *thread_data = &(*threads_data_p)[i];
-          __kmp_init_task_stack(__kmp_gtid_from_thread(thread), thread_data);
-        }
-#endif // BUILD_TIED_TASK_STACK
-       // Install the new data and free the old data
-        (*threads_data_p) = new_data;
-        __kmp_free(old_data);
-      } else {
-        KE_TRACE(10, ("__kmp_realloc_task_threads_data: T#%d allocating "
-                      "threads data for task_team %p, size = %d\n",
-                      __kmp_gtid_from_thread(thread), moldable_task_team, nthreads));
-        // Make the initial allocate for threads_data array, and zero entries
-        // Cannot use __kmp_thread_calloc() because threads not around for
-        // kmp_reap_task_team( ).
-        *threads_data_p = (kmp_thread_data_t *)__kmp_allocate(
-            nthreads * sizeof(kmp_thread_data_t));
-#ifdef BUILD_TIED_TASK_STACK
-        // GEH: Figure out if this is the right thing to do
-        for (i = 0; i < nthreads; i++) {
-          kmp_thread_data_t *thread_data = &(*threads_data_p)[i];
-          __kmp_init_task_stack(__kmp_gtid_from_thread(thread), thread_data);
-        }
-#endif // BUILD_TIED_TASK_STACK
-      }
-      moldable_task_team->mtt.mtt_max_threads = nthreads;
-    } else {
-      // If array has (more than) enough elements, go ahead and use it
-      KMP_DEBUG_ASSERT(*threads_data_p != NULL);
-    }
-
-    // initialize threads_data pointers back to thread_info structures
-    for (i = 0; i < nthreads; i++) {
-      kmp_thread_data_t *thread_data = &(*threads_data_p)[i];
-      thread_data->td.td_thr = team->t.t_threads[i];
-
-      if (thread_data->td.td_deque_last_stolen >= nthreads) {
-        // The last stolen field survives across teams / barrier, and the number
-        // of threads may have changed.  It's possible (likely?) that a new
-        // parallel region will exhibit the same behavior as previous region.
-        thread_data->td.td_deque_last_stolen = -1;
-      }
-    }
-
-    KMP_MB();
-    TCW_SYNC_4(moldable_task_team->mtt.mtt_found_tasks, TRUE);
-  }
-
-  __kmp_release_bootstrap_lock(&moldable_task_team->mtt.mtt_threads_lock);
-  return is_init_thread;
-}
-#endif
-
 // __kmp_free_task_threads_data:
 // Deallocates a threads_data array for a task team, including any attached
 // tasking deques.  Only occurs at library shutdown.
@@ -4637,73 +3884,6 @@ static kmp_task_team_t *__kmp_allocate_task_team(kmp_info_t *thread,
   return task_team;
 }
 
-#if KMP_MOLDABILITY
-
-// __kmp_allocate_task_team:
-// Allocates a task team associated with a specific team, taking it from
-// the global task team free list if possible.  Also initializes data
-// structures.
-static kmp_moldable_task_team_t *__kmp_allocate_moldable_task_team(kmp_info_t *thread,
-                                                 kmp_team_t *team) {
-  kmp_moldable_task_team_t *moldable_task_team = NULL;
-  int nthreads;
-
-  KA_TRACE(20, ("__kmp_allocate_moldable_task_team: T#%d entering; team = %p\n",
-                (thread ? __kmp_gtid_from_thread(thread) : -1), team));
-
-  // if (TCR_PTR(__kmp_free_moldable_task_teams) != NULL) {
-  //   // Take a task team from the task team pool
-  //   __kmp_acquire_bootstrap_lock(&__kmp_moldable_task_team_lock);
-  //   if (__kmp_free_moldable_task_teams != NULL) {
-  //     moldable_task_team = __kmp_free_moldable_task_teams;
-  //     TCW_PTR(__kmp_free_moldable_task_teams, moldable_task_team->tt.tt_next);
-  //     moldable_task_team->tt.tt_next = NULL;
-  //   }
-  //   __kmp_release_bootstrap_lock(&__kmp_moldable_task_team_lock);
-  // }
-
-  if (moldable_task_team == NULL) {
-    KE_TRACE(10, ("__kmp_allocate_moldable_task_team: T#%d allocating "
-                  "task team for team %p\n",
-                  __kmp_gtid_from_thread(thread), team));
-    // Allocate a new task team if one is not available. Cannot use
-    // __kmp_thread_malloc because threads not around for kmp_reap_moldable_task_team.
-    moldable_task_team = (kmp_moldable_task_team_t *)__kmp_allocate(sizeof(kmp_moldable_task_team_t));
-    __kmp_init_bootstrap_lock(&moldable_task_team->mtt.mtt_threads_lock);
-    // __kmp_init_bootstrap_lock(&moldable_task_team->mtt.mtt_task_pri_lock);
-#if USE_ITT_BUILD && USE_ITT_NOTIFY && KMP_DEBUG
-    // suppress race conditions detection on synchronization flags in debug mode
-    // this helps to analyze library internals eliminating false positives
-    __itt_suppress_mark_range(
-        __itt_suppress_range, __itt_suppress_threading_errors,
-        &moldable_task_team->mtt.mtt_found_tasks, sizeof(moldable_task_team->mtt.mtt_found_tasks));
-    __itt_suppress_mark_range(__itt_suppress_range,
-                              __itt_suppress_threading_errors,
-                              CCAST(kmp_uint32 *, &moldable_task_team->mtt.mtt_active),
-                              sizeof(moldable_task_team->mtt.mtt_active));
-#endif /* USE_ITT_BUILD && USE_ITT_NOTIFY && KMP_DEBUG */
-    // Note: __kmp_allocate zeroes returned memory, othewise we would need:
-    // moldable_task_team->tt.tt_threads_data = NULL;
-    // moldable_task_team->tt.tt_max_threads = 0;
-    // moldable_task_team->tt.tt_next = NULL;
-  }
-
-  TCW_4(moldable_task_team->mtt.mtt_found_tasks, FALSE);
-  // TCW_4(moldable_task_team->mtt.mtt_found_proxy_tasks, FALSE);
-  // TCW_4(moldable_task_team->mtt.mtt_hidden_helper_task_encountered, FALSE);
-  moldable_task_team->mtt.mtt_nproc = nthreads = team->t.t_nproc;
-
-  KMP_ATOMIC_ST_REL(&moldable_task_team->mtt.mtt_unfinished_threads, nthreads);
-  // TCW_4(moldable_task_team->mtt.mtt_hidden_helper_task_encountered, FALSE);
-  TCW_4(moldable_task_team->mtt.mtt_active, TRUE);
-
-  KA_TRACE(20, ("__kmp_allocate_moldable_task_team: T#%d exiting; moldable_task_team = %p "
-                "unfinished_threads init'd to %d\n",
-                (thread ? __kmp_gtid_from_thread(thread) : -1), moldable_task_team,
-                KMP_ATOMIC_LD_RLX(&moldable_task_team->mtt.mtt_unfinished_threads)));
-  return moldable_task_team;
-}
-#endif
 // __kmp_free_task_team:
 // Frees the task team associated with a specific thread, and adds it
 // to the global task team free list.
@@ -4963,237 +4143,6 @@ void __kmp_task_team_wait(
   }
 }
 
-#if KMP_MOLDABILITY
-// __kmp_wait_to_unref_task_teams:
-// Some threads could still be in the fork barrier release code, possibly
-// trying to steal tasks.  Wait for each thread to unreference its task team.
-void __kmp_wait_to_unref_moldable_task_teams(void) {
-  kmp_info_t *thread;
-  kmp_uint32 spins;
-  kmp_uint64 time;
-  int done;
-
-  KMP_INIT_YIELD(spins);
-  KMP_INIT_BACKOFF(time);
-
-  for (;;) {
-    done = TRUE;
-
-    // TODO: GEH - this may be is wrong because some sync would be necessary
-    // in case threads are added to the pool during the traversal. Need to
-    // verify that lock for thread pool is held when calling this routine.
-    for (thread = CCAST(kmp_info_t *, __kmp_thread_pool); thread != NULL;
-         thread = thread->th.th_next_pool) {
-#if KMP_OS_WINDOWS
-      DWORD exit_val;
-#endif
-      if (TCR_PTR(thread->th.th_moldable_task_team) == NULL) {
-        KA_TRACE(10, ("__kmp_wait_to_unref_moldable_task_team: T#%d moldable_task_team == NULL\n",
-                      __kmp_gtid_from_thread(thread)));
-        continue;
-      }
-#if KMP_OS_WINDOWS
-      // TODO: GEH - add this check for Linux* OS / OS X* as well?
-      if (!__kmp_is_thread_alive(thread, &exit_val)) {
-        thread->th.th_moldable_task_team = NULL;
-        continue;
-      }
-#endif
-
-      done = FALSE; // Because th_task_team pointer is not NULL for this thread
-
-      KA_TRACE(10, ("__kmp_wait_to_unref_moldable_task_team: Waiting for T#%d to "
-                    "unreference task_team\n",
-                    __kmp_gtid_from_thread(thread)));
-
-      if (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) {
-        void *sleep_loc;
-        // If the thread is sleeping, awaken it.
-        if ((sleep_loc = TCR_PTR(CCAST(void *, thread->th.th_sleep_loc))) !=
-            NULL) {
-          KA_TRACE(
-              10,
-              ("__kmp_wait_to_unref_task_team: T#%d waking up thread T#%d\n",
-               __kmp_gtid_from_thread(thread), __kmp_gtid_from_thread(thread)));
-          __kmp_null_resume_wrapper(thread);
-        }
-      }
-    }
-    if (done) {
-      break;
-    }
-
-    // If oversubscribed or have waited a bit, yield.
-    KMP_YIELD_OVERSUB_ELSE_SPIN(spins, time);
-  }
-}
-// __kmp_task_team_setup:  Create a task_team for the current team, but use
-// an already created, unused one if it already exists.
-void __kmp_moldable_task_team_setup(kmp_info_t *this_thr, kmp_team_t *team, int always) {
-  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
-
-  // If this task_team hasn't been created yet, allocate it. It will be used in
-  // the region after the next.
-  // If it exists, it is the current task team and shouldn't be touched yet as
-  // it may still be in use.
-  if (team->t.t_moldable_task_team[this_thr->th.th_task_state] == NULL &&
-      (always || team->t.t_nproc > 1)) {
-    team->t.t_moldable_task_team[this_thr->th.th_task_state] =
-        __kmp_allocate_moldable_task_team(this_thr, team);
-    KA_TRACE(20, ("__kmp_task_team_setup: Primary T#%d created new task_team %p"
-                  " for team %d at parity=%d\n",
-                  __kmp_gtid_from_thread(this_thr),
-                  team->t.t_moldable_task_team[this_thr->th.th_task_state],
-                  team->t.t_id, this_thr->th.th_task_state));
-  }
-
-  // After threads exit the release, they will call sync, and then point to this
-  // other task_team; make sure it is allocated and properly initialized. As
-  // threads spin in the barrier release phase, they will continue to use the
-  // previous task_team struct(above), until they receive the signal to stop
-  // checking for tasks (they can't safely reference the kmp_team_t struct,
-  // which could be reallocated by the primary thread). No task teams are formed
-  // for serialized teams.
-  if (team->t.t_nproc > 1) {
-    int other_team = 1 - this_thr->th.th_task_state;
-    KMP_DEBUG_ASSERT(other_team >= 0 && other_team < 2);
-    if (team->t.t_moldable_task_team[other_team] == NULL) { // setup other team as well
-      team->t.t_moldable_task_team[other_team] =
-          __kmp_allocate_moldable_task_team(this_thr, team);
-      KA_TRACE(20, ("__kmp_task_team_setup: Primary T#%d created second new "
-                    "task_team %p for team %d at parity=%d\n",
-                    __kmp_gtid_from_thread(this_thr),
-                    team->t.t_moldable_task_team[other_team], team->t.t_id, other_team));
-    } else { // Leave the old task team struct in place for the upcoming region;
-      // adjust as needed
-      kmp_moldable_task_team_t *moldable_task_team = team->t.t_moldable_task_team[other_team];
-      if (!moldable_task_team->mtt.mtt_active ||
-          team->t.t_nproc != moldable_task_team->mtt.mtt_nproc) {
-        TCW_4(moldable_task_team->mtt.mtt_nproc, team->t.t_nproc);
-        TCW_4(moldable_task_team->mtt.mtt_found_tasks, FALSE);
-        // TCW_4(moldable_task_team->mtt.mtt_found_proxy_tasks, FALSE);
-        // TCW_4(moldable_task_team->mtt.mtt_hidden_helper_task_encountered, FALSE);
-        KMP_ATOMIC_ST_REL(&moldable_task_team->mtt.mtt_unfinished_threads,
-                          team->t.t_nproc);
-        TCW_4(moldable_task_team->mtt.mtt_active, TRUE);
-      }
-      // if team size has changed, the first thread to enable tasking will
-      // realloc threads_data if necessary
-      KA_TRACE(20, ("__kmp_task_team_setup: Primary T#%d reset next task_team "
-                    "%p for team %d at parity=%d\n",
-                    __kmp_gtid_from_thread(this_thr),
-                    team->t.t_moldable_task_team[other_team], team->t.t_id, other_team));
-    }
-  }
-
-  // For regular thread, task enabling should be called when the task is going
-  // to be pushed to a dequeue. However, for the hidden helper thread, we need
-  // it ahead of time so that some operations can be performed without race
-  // condition.
-  if (this_thr == __kmp_hidden_helper_main_thread) {
-    KMP_DEBUG_ASSERT2(false, "moldable hidden helper tasks are not implemented")
-    // for (int i = 0; i < 2; ++i) {
-    //   kmp_moldable_task_team_t *moldable_task_team = team->t.t_moldable_task_team[i];
-    //   if (KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team)) {
-    //     continue;
-    //   }
-    //   __kmp_enable_moldable_tasking(moldable_task_team, this_thr);
-    //   for (int j = 0; j < moldable_task_team->mtt.mtt_nproc; ++j) {
-    //     kmp_thread_data_t *thread_data = &moldable_task_team->mtt.mtt_threads_data[j];
-    //     if (thread_data->td.td_deque == NULL) {
-    //       __kmp_alloc_task_deque(__kmp_hidden_helper_threads[j], thread_data);
-    //     }
-    //   }
-    // }
-  }
-  for (int i = 0; i < 2; ++i) {
-    kmp_moldable_task_team_t *moldable_task_team = team->t.t_moldable_task_team[i];
-    if (KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team)) {
-      continue;
-    }
-    __kmp_enable_moldable_tasking(moldable_task_team, this_thr);
-    for (int j = 0; j < moldable_task_team->mtt.mtt_nproc; ++j) {
-      kmp_thread_data_t *thread_data = &moldable_task_team->mtt.mtt_threads_data[j];
-      if (thread_data->td.td_deque == NULL) {
-        __kmp_alloc_task_deque(thread_data->td.td_thr, thread_data);
-      }
-    }
-  }
-}
-
-
-// __kmp_task_team_sync: Propagation of task team data from team to threads
-// which happens just after the release phase of a team barrier.  This may be
-// called by any thread, but only for teams with # threads > 1.
-void __kmp_moldable_task_team_sync(kmp_info_t *this_thr, kmp_team_t *team) {
-  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
-
-  // Toggle the th_task_state field, to switch which task_team this thread
-  // refers to
-  // This is done in __kmp_task_team_sync...
-  // this_thr->th.th_task_state = (kmp_uint8)(1 - this_thr->th.th_task_state);
-
-  // It is now safe to propagate the task team pointer from the team struct to
-  // the current thread.
-  TCW_PTR(this_thr->th.th_moldable_task_team,
-          team->t.t_moldable_task_team[this_thr->th.th_task_state]);
-  KA_TRACE(20,
-           ("__kmp_task_team_sync: Thread T#%d task team switched to task_team "
-            "%p from Team #%d (parity=%d)\n",
-            __kmp_gtid_from_thread(this_thr), this_thr->th.th_moldable_task_team,
-            team->t.t_id, this_thr->th.th_task_state));
-}
-
-// __kmp_task_team_wait: Primary thread waits for outstanding tasks after the
-// barrier gather phase. Only called by primary thread if #threads in team > 1
-// or if proxy tasks were created.
-//
-// wait is a flag that defaults to 1 (see kmp.h), but waiting can be turned off
-// by passing in 0 optionally as the last argument. When wait is zero, primary
-// thread does not wait for unfinished_threads to reach 0.
-void __kmp_moldable_task_team_wait(
-    kmp_info_t *this_thr,
-    kmp_team_t *team USE_ITT_BUILD_ARG(void *itt_sync_obj), int wait) {
-  kmp_moldable_task_team_t *moldable_task_team = team->t.t_moldable_task_team[this_thr->th.th_task_state];
-
-  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
-  KMP_DEBUG_ASSERT(moldable_task_team == this_thr->th.th_moldable_task_team);
-
-  if ((moldable_task_team != NULL) && KMP_MOLDABLE_TASKING_ENABLED(moldable_task_team)) {
-    if (wait) {
-      KA_TRACE(20, ("__kmp_task_team_wait: Primary T#%d waiting for all tasks "
-                    "(for unfinished_threads to reach 0) on task_team = %p\n",
-                    __kmp_gtid_from_thread(this_thr), moldable_task_team));
-      // Worker threads may have dropped through to release phase, but could
-      // still be executing tasks. Wait here for tasks to complete. To avoid
-      // memory contention, only primary thread checks termination condition.
-      kmp_flag_32<false, false> flag(
-          RCAST(std::atomic<kmp_uint32> *,
-                &moldable_task_team->mtt.mtt_unfinished_threads),
-          0U);
-      flag.wait(this_thr, TRUE USE_ITT_BUILD_ARG(itt_sync_obj));
-    }
-    // Deactivate the old task team, so that the worker threads will stop
-    // referencing it while spinning.
-    KA_TRACE(
-        20,
-        ("__kmp_task_team_wait: Primary T#%d deactivating task_team %p: "
-         "setting active to false, setting local and team's pointer to NULL\n",
-         __kmp_gtid_from_thread(this_thr), moldable_task_team));
-    // KMP_DEBUG_ASSERT(moldable_task_team->mtt.mtt_nproc > 1 ||
-    //                  moldable_task_team->mtt.mtt_found_proxy_tasks == TRUE ||
-    //                  moldable_task_team->mtt.mtt_hidden_helper_task_encountered == TRUE);
-    // TCW_SYNC_4(moldable_task_team->mtt.mtt_found_proxy_tasks, FALSE);
-    // TCW_SYNC_4(moldable_task_team->mtt.mtt_hidden_helper_task_encountered, FALSE);
-    // KMP_CHECK_UPDATE(moldable_task_team->mtt.mtt_untied_task_encountered, 0);
-    TCW_SYNC_4(moldable_task_team->mtt.mtt_active, FALSE);
-    KMP_MB();
-
-    TCW_PTR(this_thr->th.th_moldable_task_team, NULL);
-  }
-}
-#endif
-
 // __kmp_tasking_barrier:
 // This routine is called only when __kmp_tasking_mode == tskm_extra_barrier.
 // Internal function to execute all tasks prior to a regular barrier or a join
@@ -5313,93 +4262,6 @@ release_and_exit:
 
   return result;
 }
-
-#if KMP_MOLDABILITY
-// __kmp_give_task puts a task into a given thread queue if:
-//  - the queue for that thread was created
-//  - there's space in that queue
-// Because of this, __kmp_push_task needs to check if there's space after
-// getting the lock
-static bool __kmp_give_moldable_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
-                            kmp_int32 pass) {
-  kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-  kmp_moldable_task_team_t *moldable_task_team = taskdata->td_moldable_task_team;
-
-  KA_TRACE(20, ("__kmp_give_task: trying to give task %p to thread %d.\n",
-                taskdata, tid));
-
-  // If task_team is NULL something went really bad...
-  KMP_DEBUG_ASSERT(moldable_task_team != NULL);
-
-  bool result = false;
-  kmp_thread_data_t *thread_data = &moldable_task_team->mtt.mtt_threads_data[tid];
-
-  if (thread_data->td.td_deque == NULL) {
-    // There's no queue in this thread, go find another one
-    // We're guaranteed that at least one thread has a queue
-    KA_TRACE(30,
-             ("__kmp_give_task: thread %d has no queue while giving task %p.\n",
-              tid, taskdata));
-    return result;
-  }
-
-  if (TCR_4(thread_data->td.td_deque_ntasks) >=
-      TASK_DEQUE_SIZE(thread_data->td)) {
-    KA_TRACE(
-        30,
-        ("__kmp_give_task: queue is full while giving task %p to thread %d.\n",
-         taskdata, tid));
-
-    // if this deque is bigger than the pass ratio give a chance to another
-    // thread
-    if (TASK_DEQUE_SIZE(thread_data->td) / INITIAL_TASK_DEQUE_SIZE >= pass)
-      return result;
-
-    __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
-    if (TCR_4(thread_data->td.td_deque_ntasks) >=
-        TASK_DEQUE_SIZE(thread_data->td)) {
-      // expand deque to push the task which is not allowed to execute
-      __kmp_realloc_task_deque(thread, thread_data);
-    }
-
-  } else {
-
-    __kmp_acquire_bootstrap_lock(&thread_data->td.td_deque_lock);
-
-    if (TCR_4(thread_data->td.td_deque_ntasks) >=
-        TASK_DEQUE_SIZE(thread_data->td)) {
-      KA_TRACE(30, ("__kmp_give_task: queue is full while giving task %p to "
-                    "thread %d.\n",
-                    taskdata, tid));
-
-      // if this deque is bigger than the pass ratio give a chance to another
-      // thread
-      if (TASK_DEQUE_SIZE(thread_data->td) / INITIAL_TASK_DEQUE_SIZE >= pass)
-        goto release_and_exit;
-
-      __kmp_realloc_task_deque(thread, thread_data);
-    }
-  }
-
-  // lock is held here, and there is space in the deque
-
-  thread_data->td.td_deque[thread_data->td.td_deque_tail] = taskdata;
-  // Wrap index.
-  thread_data->td.td_deque_tail =
-      (thread_data->td.td_deque_tail + 1) & TASK_DEQUE_MASK(thread_data->td);
-  TCW_4(thread_data->td.td_deque_ntasks,
-        TCR_4(thread_data->td.td_deque_ntasks) + 1);
-
-  result = true;
-  KA_TRACE(30, ("__kmp_give_task: successfully gave task %p to thread %d.\n",
-                taskdata, tid));
-
-release_and_exit:
-  __kmp_release_bootstrap_lock(&thread_data->td.td_deque_lock);
-
-  return result;
-}
-#endif
 
 #define PROXY_TASK_FLAG 0x40000000
 /* The finish of the proxy tasks is divided in two pieces:

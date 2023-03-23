@@ -566,9 +566,6 @@ void __kmpc_end_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
   if (task_team != NULL && (task_team->tt.tt_found_proxy_tasks ||
                             task_team->tt.tt_hidden_helper_task_encountered)) {
     __kmp_task_team_wait(this_thr, serial_team USE_ITT_BUILD_ARG(NULL));
-#if KMP_MOLDABILITY
-    __kmp_moldable_task_team_wait(this_thr, serial_team USE_ITT_BUILD_ARG(NULL));
-#endif
   }
 
   KMP_MB();
@@ -663,10 +660,6 @@ void __kmpc_end_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
       // Copy the task team from the new child / old parent team to the thread.
       this_thr->th.th_task_team =
           this_thr->th.th_team->t.t_task_team[this_thr->th.th_task_state];
-#if KMP_MOLDABILITY
-      this_thr->th.th_moldable_task_team =
-          this_thr->th.th_team->t.t_moldable_task_team[this_thr->th.th_task_state];
-#endif
       KA_TRACE(20,
                ("__kmpc_end_serialized_parallel: T#%d restoring task_team %p / "
                 "team %p\n",
@@ -3508,9 +3501,6 @@ __kmp_swap_teams_for_teams_reduction(kmp_info_t *th, kmp_team_t **team_p,
       th->th.th_task_team = th->th.th_team->t.t_task_team[0];
       *task_state = th->th.th_task_state;
       th->th.th_task_state = 0;
-#if KMP_MOLDABILITY
-      th->th.th_moldable_task_team = th->th.th_team->t.t_moldable_task_team[0];
-#endif
       return 1;
     }
   }
@@ -3524,9 +3514,6 @@ __kmp_restore_swapped_teams(kmp_info_t *th, kmp_team_t *team, int task_state) {
   th->th.th_team = team;
   th->th.th_team_nproc = team->t.t_nproc;
   th->th.th_task_team = team->t.t_task_team[task_state];
-#if KMP_MOLDABILITY
-  th->th.th_moldable_task_team = team->t.t_moldable_task_team[task_state];
-#endif
   __kmp_type_convert(task_state, &(th->th.th_task_state));
 }
 

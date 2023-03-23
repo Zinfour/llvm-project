@@ -1145,14 +1145,6 @@ void __kmp_serialized_parallel(ident_t *loc, kmp_int32 global_tid) {
                   "team %p, new task_team = NULL\n",
                   global_tid, this_thr->th.th_task_team, this_thr->th.th_team));
     this_thr->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-    KMP_DEBUG_ASSERT(
-        this_thr->th.th_moldable_task_team ==
-        this_thr->th.th_team->t.t_moldable_task_team[this_thr->th.th_task_state]);
-    KMP_DEBUG_ASSERT(serial_team->t.t_moldable_task_team[this_thr->th.th_task_state] ==
-                      NULL);
-    this_thr->th.th_moldable_task_team = NULL;
-#endif
   }
 
   kmp_proc_bind_t proc_bind = this_thr->th.th_set_proc_bind;
@@ -1987,10 +1979,6 @@ int __kmp_fork_call(ident_t *loc, int gtid,
     if (__kmp_tasking_mode != tskm_immediate_exec) {
       KMP_DEBUG_ASSERT(master_th->th.th_task_team ==
                        parent_team->t.t_task_team[master_th->th.th_task_state]);
-#if KMP_MOLDABILITY
-      KMP_DEBUG_ASSERT(master_th->th.th_moldable_task_team ==
-                       parent_team->t.t_moldable_task_team[master_th->th.th_task_state]);
-#endif
     }
 #endif
 
@@ -2188,10 +2176,6 @@ int __kmp_fork_call(ident_t *loc, int gtid,
       // team, it should be NULL.
       KMP_DEBUG_ASSERT(master_th->th.th_task_team ==
                        parent_team->t.t_task_team[master_th->th.th_task_state]);
-#if KMP_MOLDABILITY
-      KMP_DEBUG_ASSERT(master_th->th.th_moldable_task_team ==
-                       parent_team->t.t_moldable_task_team[master_th->th.th_task_state]);
-#endif
       KA_TRACE(20, ("__kmp_fork_call: Primary T#%d pushing task_team %p / team "
                     "%p, new task_team %p / team %p\n",
                     __kmp_gtid_from_thread(master_th),
@@ -2242,10 +2226,6 @@ int __kmp_fork_call(ident_t *loc, int gtid,
 #if !KMP_NESTED_HOT_TEAMS
       KMP_DEBUG_ASSERT((master_th->th.th_task_team == NULL) ||
                        (team == root->r.r_hot_team));
-#if KMP_MOLDABILITY
-      KMP_DEBUG_ASSERT((master_th->th.th_moldable_task_team == NULL) ||
-                       (team == root->r.r_hot_team));
-#endif
 #endif
     }
 
@@ -2458,10 +2438,6 @@ void __kmp_join_call(ident_t *loc, int gtid
                   master_th->th.th_task_team));
     KMP_DEBUG_ASSERT(master_th->th.th_task_team ==
                      team->t.t_task_team[master_th->th.th_task_state]);
-#if KMP_MOLDABILITY
-    KMP_DEBUG_ASSERT(master_th->th.th_moldable_task_team ==
-                     team->t.t_moldable_task_team[master_th->th.th_task_state]);
-#endif
   }
 #endif
 
@@ -2731,10 +2707,6 @@ void __kmp_join_call(ident_t *loc, int gtid
     // Copy the task team from the parent team to the primary thread
     master_th->th.th_task_team =
         parent_team->t.t_task_team[master_th->th.th_task_state];
-#if KMP_MOLDABILITY
-    master_th->th.th_moldable_task_team =
-        parent_team->t.t_moldable_task_team[master_th->th.th_task_state];
-#endif
     KA_TRACE(20,
              ("__kmp_join_call: Primary T#%d restoring task_team %p, team %p\n",
               __kmp_gtid_from_thread(master_th), master_th->th.th_task_team,
@@ -2848,9 +2820,6 @@ void __kmp_set_num_threads(int new_nth, int gtid) {
         // When decreasing team size, threads no longer in the team should unref
         // task team.
         hot_team->t.t_threads[f]->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-        hot_team->t.t_threads[f]->th.th_moldable_task_team = NULL;
-#endif
       }
       __kmp_free_thread(hot_team->t.t_threads[f]);
       hot_team->t.t_threads[f] = NULL;
@@ -4141,9 +4110,6 @@ static int __kmp_reset_root(int gtid, kmp_root_t *root) {
   // steal tasks.
   if (__kmp_tasking_mode != tskm_immediate_exec) {
     __kmp_wait_to_unref_task_teams();
-#if KMP_MOLDABILITY
-    __kmp_wait_to_unref_moldable_task_teams();
-#endif
   }
 
 #if KMP_OS_WINDOWS
@@ -4236,10 +4202,6 @@ void __kmp_unregister_root_current_thread(int gtid) {
     thread->th.ompt_thread_info.state = ompt_state_undefined;
 #endif
     __kmp_task_team_wait(thread, team USE_ITT_BUILD_ARG(NULL));
-#if KMP_MOLDABILITY
-    __kmp_moldable_task_team_wait(thread, team USE_ITT_BUILD_ARG(NULL));
-#endif
-    
   }
 
   __kmp_reset_root(gtid, root);
@@ -4317,15 +4279,9 @@ static void __kmp_initialize_info(kmp_info_t *this_thr, kmp_team_t *team,
     // When tasking is possible, threads are not safe to reap until they are
     // done tasking; this will be set when tasking code is exited in wait
     this_thr->th.th_reap_state = KMP_NOT_SAFE_TO_REAP;
-#if KMP_MOLDABILITY
-    this_thr->th.th_moldable_reap_state = KMP_NOT_SAFE_TO_REAP;
-#endif
   } else {
     // no tasking --> always safe to reap
     this_thr->th.th_reap_state = KMP_SAFE_TO_REAP;
-#if KMP_MOLDABILITY
-    this_thr->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
-#endif
   }
   this_thr->th.th_set_proc_bind = proc_bind_default;
 #if KMP_AFFINITY_SUPPORTED
@@ -5353,9 +5309,6 @@ __kmp_allocate_team(kmp_root_t *root, int new_nproc, int max_nproc,
             // When decreasing team size, threads no longer in the team should
             // unref task team.
             team->t.t_threads[f]->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-            team->t.t_threads[f]->th.th_moldable_task_team = NULL;
-#endif
           }
           __kmp_free_thread(team->t.t_threads[f]);
           team->t.t_threads[f] = NULL;
@@ -5798,24 +5751,6 @@ void __kmp_free_team(kmp_root_t *root,
             fl.resume(__kmp_gtid_from_thread(th));
           KMP_CPU_PAUSE();
         }
-#if KMP_MOLDABILITY
-        volatile kmp_uint32 *state_m = &th->th.th_moldable_reap_state;
-        while (*state_m != KMP_SAFE_TO_REAP) {
-#if KMP_OS_WINDOWS
-          // On Windows a thread can be killed at any time, check this
-          DWORD ecode;
-          if (!__kmp_is_thread_alive(th, &ecode)) {
-            *state = KMP_SAFE_TO_REAP; // reset the flag for dead thread
-            break;
-          }
-#endif
-          // first check if thread is sleeping
-          kmp_flag_64<> fl(&th->th.th_bar[bs_forkjoin_barrier].bb.b_go, th);
-          if (fl.is_sleeping())
-            fl.resume(__kmp_gtid_from_thread(th));
-          KMP_CPU_PAUSE();
-        }
-#endif
       }
 
       // Delete task teams
@@ -5826,9 +5761,6 @@ void __kmp_free_team(kmp_root_t *root,
           for (f = 0; f < team->t.t_nproc; ++f) { // threads unref task teams
             KMP_DEBUG_ASSERT(team->t.t_threads[f]);
             team->t.t_threads[f]->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-            team->t.t_threads[f]->th.th_moldable_task_team = NULL;
-#endif
           }
           KA_TRACE(
               20,
@@ -5990,9 +5922,6 @@ void __kmp_free_thread(kmp_info_t *this_th) {
   }
   this_th->th.th_task_state = 0;
   this_th->th.th_reap_state = KMP_SAFE_TO_REAP;
-#if KMP_MOLDABILITY
-  this_th->th.th_moldable_reap_state = KMP_SAFE_TO_REAP;
-#endif
 
   /* put thread back on the free pool */
   TCW_PTR(this_th->th.th_team, NULL);
@@ -6206,9 +6135,6 @@ void *__kmp_launch_thread(kmp_info_t *this_thr) {
 #endif
 
   this_thr->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-  this_thr->th.th_moldable_task_team = NULL;
-#endif
   /* run the destructors for the threadprivate data for this thread */
   __kmp_common_destroy_gtid(gtid);
 
@@ -6487,9 +6413,6 @@ static void __kmp_internal_end(void) {
       __kmp_thread_pool = thread->th.th_next_pool;
       // Reap it.
       KMP_DEBUG_ASSERT(thread->th.th_reap_state == KMP_SAFE_TO_REAP);
-#if KMP_MOLDABILITY
-      KMP_DEBUG_ASSERT(thread->th.th_moldable_reap_state == KMP_SAFE_TO_REAP);
-#endif
       thread->th.th_next_pool = NULL;
       thread->th.th_in_pool = FALSE;
       __kmp_reap_thread(thread, 0);
@@ -6771,9 +6694,6 @@ void __kmp_internal_end_thread(int gtid_req) {
 
       if (gtid >= 0) {
         __kmp_threads[gtid]->th.th_task_team = NULL;
-#if KMP_MOLDABILITY
-        __kmp_threads[gtid]->th.th_moldable_task_team = NULL;
-#endif
       }
 
       KA_TRACE(10,

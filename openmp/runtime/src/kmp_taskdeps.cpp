@@ -881,23 +881,9 @@ void __kmpc_omp_taskwait_deps_51(ident_t *loc_ref, kmp_int32 gtid,
   kmp_flag_32<false, false> flag(
       (std::atomic<kmp_uint32> *)&node.dn.npredecessors, 0U);
   while (node.dn.npredecessors > 0) {
-
-#if KMP_MOLDABILITY
-    if (thread->th.th_task_team->tt.tt_threads_data != NULL) {
-      flag.execute_tasks(thread, gtid, FALSE,
-                         &thread_finished USE_ITT_BUILD_ARG(NULL),
-                         __kmp_task_stealing_constraint);
-    }
-    if (thread->th.th_moldable_task_team->mtt.mtt_threads_data != NULL) {
-      flag.execute_moldable_tasks(thread, gtid, FALSE,
-                         &thread_finished USE_ITT_BUILD_ARG(NULL),
-                         __kmp_task_stealing_constraint);
-    }
-#else
     flag.execute_tasks(thread, gtid, FALSE,
                        &thread_finished USE_ITT_BUILD_ARG(NULL),
                        __kmp_task_stealing_constraint);
-#endif
   }
 
 #if OMPT_SUPPORT
