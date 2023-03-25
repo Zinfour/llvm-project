@@ -2607,6 +2607,14 @@ typedef struct kmp_base_thread_data {
   kmp_int32 td_deque_ntasks; // Number of tasks in deque
   // GEH: shouldn't this be volatile since used in while-spin?
   kmp_int32 td_deque_last_stolen; // Thread number of last successful steal
+  
+  kmp_bootstrap_lock_t td_moldable_deque_lock; // Lock for accessing deque
+  kmp_taskdata_t *
+      *td_moldable_deque; // Deque of tasks encountered by td_thr, dynamically allocated
+  kmp_int32 td_moldable_deque_size; // Size of deck
+  kmp_uint32 td_moldable_deque_head; // Head of deque (will wrap)
+  kmp_uint32 td_moldable_deque_tail; // Tail of deque (will wrap)
+  kmp_int32 td_moldable_deque_ntasks; // Number of tasks in deque
 #ifdef BUILD_TIED_TASK_STACK
   kmp_task_stack_t td_susp_tied_tasks; // Stack of suspended tied tasks for task
 // scheduling constraint
@@ -2618,6 +2626,11 @@ typedef struct kmp_base_thread_data {
 
 #define TASK_DEQUE_SIZE(td) ((td).td_deque_size)
 #define TASK_DEQUE_MASK(td) ((td).td_deque_size - 1)
+
+#if KMP_MOLDABILITY
+#define TASK_MOLDABLE_DEQUE_SIZE(td) ((td).td_moldable_deque_size)
+#define TASK_MOLDABLE_DEQUE_MASK(td) ((td).td_moldable_deque_size - 1)
+#endif
 
 typedef union KMP_ALIGN_CACHE kmp_thread_data {
   kmp_base_thread_data_t td;
