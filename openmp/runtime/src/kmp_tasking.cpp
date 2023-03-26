@@ -560,9 +560,11 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   thread_data = &task_team->tt.tt_threads_data[tid];
 #if KMP_MOLDABILITY
   if (taskdata->td_moldable) {
-    int k = __kmp_get_random(thread) % task_team->tt.tt_nproc;
-    KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque != NULL);
-    KMP_DEBUG_ASSERT(__kmp_give_task(task_team->tt.tt_threads_data[k].td.td_thr, k, task, 0));
+    int k;
+    do {
+      k = __kmp_get_random(thread) % task_team->tt.tt_nproc;
+    } while (!__kmp_give_task(task_team->tt.tt_threads_data[k].td.td_thr, k, task, 0));
+    
   } else {
 #endif
   // No lock needed since only owner can allocate. If the task is hidden_helper,
@@ -3948,7 +3950,9 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
         thread_data->td.td_deque_last_stolen = -1;
       }
 #if KMP_MOLDABILITY
-      __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+      if (i <= 0) {
+        __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+      }
 #endif
     }
 
@@ -4377,8 +4381,14 @@ static bool __kmp_give_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
 
 #if KMP_MOLDABILITY
   if (taskdata->td_moldable) {
-    KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque != NULL);
-
+    if (thread_data->td.td_moldable_deque == NULL) {
+      // There's no queue in this thread, go find another one
+      // We're guaranteed that at least one thread has a queue
+      KA_TRACE(30,
+              ("__kmp_give_task: thread %d has no queue while giving task %p.\n",
+                tid, taskdata));
+      return result;
+    }
     if (TCR_4(thread_data->td.td_moldable_deque_ntasks) >=
         TASK_MOLDABLE_DEQUE_SIZE(thread_data->td)) {
       KA_TRACE(
