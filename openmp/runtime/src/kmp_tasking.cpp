@@ -3166,6 +3166,35 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
               thread_data->td.td_moldable_deque_head, thread_data->td.td_moldable_deque_tail));
     return NULL;
   }
+  kmp_affin_mask_t *task_mask = thread_data->td.td_moldable_team_affin_mask;
+  kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+  int i;
+  KMP_CPU_SET_ITERATE(i, task_mask) {
+    if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
+      __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_lock);
+      KA_TRACE(10,
+              ("__kmp_remove_my_moldable_task(exit #3): T#%d moldable task not removed, would cause oversubscription: "
+                "ntasks=%d head=%u tail=%u\n",
+                gtid, thread_data->td.td_moldable_deque_ntasks,
+                thread_data->td.td_moldable_deque_head, thread_data->td.td_moldable_deque_tail));
+      return NULL;
+    }
+  }
+
+  __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+
+  KMP_CPU_SET_ITERATE(i, task_mask) {
+    if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
+      __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+      __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_lock);
+      KA_TRACE(10,
+              ("__kmp_remove_my_moldable_task(exit #4): T#%d moldable task not removed, would cause oversubscription: "
+                "ntasks=%d head=%u tail=%u\n",
+                gtid, thread_data->td.td_moldable_deque_ntasks,
+                thread_data->td.td_moldable_deque_head, thread_data->td.td_moldable_deque_tail));
+      return NULL;
+    }
+  }
 
   tail = (thread_data->td.td_moldable_deque_tail - 1) &
          TASK_MOLDABLE_DEQUE_MASK(thread_data->td); // Wrap index.
@@ -3174,9 +3203,10 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   if (!__kmp_task_is_allowed(gtid, is_constrained, taskdata,
                              thread->th.th_current_task)) {
     // The TSC does not allow to steal victim task
+    __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
     __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_lock);
     KA_TRACE(10,
-             ("__kmp_remove_my_moldable_task(exit #3): T#%d TSC blocks tail task: "
+             ("__kmp_remove_my_moldable_task(exit #5): T#%d TSC blocks tail task: "
               "ntasks=%d head=%u tail=%u\n",
               gtid, thread_data->td.td_moldable_deque_ntasks,
               thread_data->td.td_moldable_deque_head, thread_data->td.td_moldable_deque_tail));
@@ -3185,10 +3215,13 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
 
   thread_data->td.td_moldable_deque_tail = tail;
   TCW_4(thread_data->td.td_moldable_deque_ntasks, thread_data->td.td_moldable_deque_ntasks - 1);
+  
+  KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
 
+  __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
   __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_lock);
 
-  KA_TRACE(10, ("__kmp_remove_my_moldable_task(exit #4): T#%d task %p removed: "
+  KA_TRACE(10, ("__kmp_remove_my_moldable_task(exit #6): T#%d task %p removed: "
                 "ntasks=%d head=%u tail=%u\n",
                 gtid, taskdata, thread_data->td.td_moldable_deque_ntasks,
                 thread_data->td.td_moldable_deque_head, thread_data->td.td_moldable_deque_tail));
@@ -3477,11 +3510,24 @@ static inline int __kmp_execute_tasks_template(
         thread->th.th_moldable_invoke_routine = task->routine;
 
         task->routine = __kmp_invoke_task_dummy;
-        
+        thread->th.th_set_nproc = threads_data[tid].td.td_moldable_team_size;
+
         __kmp_invoke_task(gtid, task, current_task);
 
         task->routine = thread->th.th_moldable_invoke_routine;
         thread->th.th_moldable_invoke_routine = NULL;
+
+        __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+
+        kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_mask;
+        kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+        int i;
+        KMP_CPU_SET_ITERATE(i, global_mask) {
+          if (KMP_CPU_ISSET(i, task_mask)) {
+            KMP_CPU_CLR(i, global_mask);
+          }
+        }
+        __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
       } else
 #endif
         __kmp_invoke_task(gtid, task, current_task);
@@ -3950,8 +3996,21 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
         thread_data->td.td_deque_last_stolen = -1;
       }
 #if KMP_MOLDABILITY
-      if (i <= 0) {
+      if (i < 3) {
+        int denominator = 1;
+        int k = i + 1;
+        while (k >>= 1) denominator <<= 1;
+
         __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+        thread_data->td.td_moldable_team_size = team->t.t_nproc / denominator;
+        KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_mask);
+        KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_mask);
+
+        int offset = (1 + i - denominator) * team->t.t_nproc / denominator;
+
+        for (int j = offset; j < offset + thread_data->td.td_moldable_team_size; j++) {
+          KMP_CPU_SET(j, thread_data->td.td_moldable_team_affin_mask);
+        }
       }
 #endif
     }
@@ -4048,6 +4107,10 @@ static kmp_task_team_t *__kmp_allocate_task_team(kmp_info_t *thread,
     // task_team->tt.tt_threads_data = NULL;
     // task_team->tt.tt_max_threads = 0;
     // task_team->tt.tt_next = NULL;
+#if KMP_MOLDABILITY
+    KMP_CPU_ALLOC(task_team->tt.tt_moldable_teams_affinity_mask);
+    __kmp_init_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+#endif
   }
 
   TCW_4(task_team->tt.tt_found_tasks, FALSE);
@@ -4385,7 +4448,7 @@ static bool __kmp_give_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
       // There's no queue in this thread, go find another one
       // We're guaranteed that at least one thread has a queue
       KA_TRACE(30,
-              ("__kmp_give_task: thread %d has no queue while giving task %p.\n",
+              ("__kmp_give_task: thread %d has no queue while giving moldable task %p.\n",
                 tid, taskdata));
       return result;
     }
@@ -4393,7 +4456,7 @@ static bool __kmp_give_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
         TASK_MOLDABLE_DEQUE_SIZE(thread_data->td)) {
       KA_TRACE(
           30,
-          ("__kmp_give_task: queue is full while giving task %p to thread %d.\n",
+          ("__kmp_give_task: queue is full while giving moldable task %p to thread %d.\n",
           taskdata, tid));
 
       __kmp_acquire_bootstrap_lock(&thread_data->td.td_moldable_deque_lock);
@@ -4409,7 +4472,7 @@ static bool __kmp_give_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
 
       if (TCR_4(thread_data->td.td_moldable_deque_ntasks) >=
           TASK_MOLDABLE_DEQUE_SIZE(thread_data->td)) {
-        KA_TRACE(30, ("__kmp_give_task: queue is full while giving task %p to "
+        KA_TRACE(30, ("__kmp_give_task: queue is full while giving moldable task %p to "
                       "thread %d.\n",
                       taskdata, tid));
 
@@ -4427,7 +4490,7 @@ static bool __kmp_give_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
           TCR_4(thread_data->td.td_moldable_deque_ntasks) + 1);
 
     result = true;
-    KA_TRACE(30, ("__kmp_give_task: successfully gave task %p to thread %d.\n",
+    KA_TRACE(30, ("__kmp_give_task: successfully gave moldable task %p to thread %d.\n",
                   taskdata, tid));
 
     __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_lock);

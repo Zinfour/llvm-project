@@ -2615,6 +2615,9 @@ typedef struct kmp_base_thread_data {
   kmp_uint32 td_moldable_deque_head; // Head of deque (will wrap)
   kmp_uint32 td_moldable_deque_tail; // Tail of deque (will wrap)
   kmp_int32 td_moldable_deque_ntasks; // Number of tasks in deque
+
+  kmp_int32 td_moldable_team_size;
+  kmp_affin_mask_t *td_moldable_team_affin_mask;
 #endif
 #ifdef BUILD_TIED_TASK_STACK
   kmp_task_stack_t td_susp_tied_tasks; // Stack of suspended tied tasks for task
@@ -2677,6 +2680,10 @@ typedef struct kmp_base_task_team {
   KMP_ALIGN_CACHE
   volatile kmp_uint32
       tt_active; /* is the team still actively executing tasks */
+#if KMP_MOLDABILITY
+  kmp_bootstrap_lock_t tt_moldable_teams_affinity_lock;
+  kmp_affin_mask_t* tt_moldable_teams_affinity_mask;
+#endif
 } kmp_base_task_team_t;
 
 union KMP_ALIGN_CACHE kmp_task_team {
