@@ -2836,6 +2836,7 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint32 th_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
 #if KMP_MOLDABILITY
+  kmp_affin_mask_t *th_set_affin_mask;
   kmp_routine_entry_t th_moldable_invoke_routine;
 #endif
   /* More stuff for keeping track of active/sleeping threads (this part is

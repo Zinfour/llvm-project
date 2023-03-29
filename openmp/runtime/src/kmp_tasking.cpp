@@ -3511,12 +3511,16 @@ static inline int __kmp_execute_tasks_template(
 
         task->routine = __kmp_invoke_task_dummy;
         thread->th.th_set_nproc = threads_data[tid].td.td_moldable_team_size;
-
+        kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
+        thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_mask;
+        __kmp_set_system_affinity(thread->th.th_affin_mask, true);
+        
         __kmp_invoke_task(gtid, task, current_task);
 
         task->routine = thread->th.th_moldable_invoke_routine;
         thread->th.th_moldable_invoke_routine = NULL;
-
+        thread->th.th_affin_mask = old_affin_mask;
+        __kmp_set_system_affinity(thread->th.th_affin_mask, true);
         __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
 
         kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_mask;

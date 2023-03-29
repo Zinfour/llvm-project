@@ -5148,7 +5148,16 @@ static void __kmp_partition_places(kmp_team_t *team, int update_master_only) {
     break;
   }
 
-  KA_TRACE(20, ("__kmp_partition_places: exit T#%d\n", team->t.t_id));
+#if KMP_MOLDABILITY
+  if (master_th->th.th_moldable_invoke_routine != NULL) {
+    for (int i = 0; i < team->t.t_nproc; i++) {
+        kmp_info_t *th = team->t.t_threads[i];
+        th->th.th_set_affin_mask = master_th->th.th_affin_mask;
+    }
+  }
+#endif
+
+    KA_TRACE(20, ("__kmp_partition_places: exit T#%d\n", team->t.t_id));
 }
 
 #endif // KMP_AFFINITY_SUPPORTED

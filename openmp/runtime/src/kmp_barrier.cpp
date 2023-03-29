@@ -2593,6 +2593,26 @@ void __kmp_fork_barrier(int gtid, int tid) {
       __kmp_affinity_set_place(gtid);
     }
   }
+#if KMP_MOLDABILITY
+  if (this_thr->th.th_set_affin_mask) {
+    
+    KMP_CPU_COPY(this_thr->th.th_affin_mask, this_thr->th.th_set_affin_mask);
+    // this_thr->th.th_current_place = this_thr->th.th_new_place;
+    // Copy topology information associated with the place
+    // this_thr->th.th_topology_ids = __kmp_affinity.ids[this_thr->th.th_new_place];
+    // this_thr->th.th_topology_attrs = __kmp_affinity.attrs[this_thr->th.th_new_place];
+
+    if (__kmp_affinity.flags.verbose) {
+      char buf[KMP_AFFIN_MASK_PRINT_LEN];
+      __kmp_affinity_print_mask(buf, KMP_AFFIN_MASK_PRINT_LEN,
+                                this_thr->th.th_affin_mask);
+      KMP_INFORM(BoundToOSProcSet, "KMP_SET_AFFINITY", (kmp_int32)getpid(),
+                gtid, gtid, buf);
+    }
+    __kmp_set_system_affinity(this_thr->th.th_affin_mask, TRUE);
+    this_thr->th.th_set_affin_mask = NULL;
+  }
+#endif // KMP_MOLDABILITY
 #endif // KMP_AFFINITY_SUPPORTED
   // Perform the display affinity functionality
   if (__kmp_display_affinity) {
