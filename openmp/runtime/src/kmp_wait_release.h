@@ -840,15 +840,6 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
-#if KMP_MOLDABILITY
-  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
-                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-                    kmp_int32 is_constrained) {
-    return __kmp_execute_moldable_tasks_32(
-        this_thr, gtid, this, final_spin,
-        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-  }
-#endif
   bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
     if (final_spin)
@@ -885,15 +876,6 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
-#if KMP_MOLDABILITY
-  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
-                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-                    kmp_int32 is_constrained) {
-    return __kmp_execute_moldable_tasks_64(
-        this_thr, gtid, this, final_spin,
-        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-  }
-#endif
   bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
     if (final_spin)
@@ -930,16 +912,6 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
-
-#if KMP_MOLDABILITY
-  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
-                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-                    kmp_int32 is_constrained) {
-    return __kmp_atomic_execute_moldable_tasks_64(
-        this_thr, gtid, this, final_spin,
-        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-  }
-#endif
   bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
     if (final_spin)
@@ -1043,24 +1015,6 @@ public:
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
 #endif
   }
-#if KMP_MOLDABILITY
-  int execute_moldable_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
-                    int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
-                    kmp_int32 is_constrained) {
-#if OMPD_SUPPORT
-    int ret = __kmp_execute_moldable_tasks_oncore(
-        this_thr, gtid, this, final_spin,
-        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-    if (ompd_state & OMPD_ENABLE_BP)
-      ompd_bp_task_end();
-    return ret;
-#else
-    return __kmp_execute_moldable_tasks_oncore(
-        this_thr, gtid, this, final_spin,
-        thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
-#endif
-  }
-#endif
   enum barrier_type get_bt() { return bt; }
   flag_type get_ptr_type() { return flag_oncore; }
 };
