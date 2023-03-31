@@ -1239,4 +1239,11 @@ public:
     resizing = 0; // One writer
   }
 };
+
+
+
+void __kmp_affinity_get_mask_topology_info(const kmp_affin_mask_t *mask,
+                                                  kmp_affinity_ids_t &ids,
+                                                  kmp_affinity_attrs_t &attrs);
+
 #endif // KMP_AFFINITY_H

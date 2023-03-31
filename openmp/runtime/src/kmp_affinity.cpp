@@ -4063,7 +4063,7 @@ static int *procarr = NULL;
 static int __kmp_aff_depth = 0;
 static int *__kmp_osid_to_hwthread_map = NULL;
 
-static void __kmp_affinity_get_mask_topology_info(const kmp_affin_mask_t *mask,
+void __kmp_affinity_get_mask_topology_info(const kmp_affin_mask_t *mask,
                                                   kmp_affinity_ids_t &ids,
                                                   kmp_affinity_attrs_t &attrs) {
   if (!KMP_AFFINITY_CAPABLE())

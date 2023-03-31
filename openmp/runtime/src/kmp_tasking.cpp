@@ -16,6 +16,9 @@
 #include "kmp_stats.h"
 #include "kmp_wait_release.h"
 #include "kmp_taskdeps.h"
+#if KMP_MOLDABILITY
+#include "kmp_affinity.h"
+#endif
 
 #if OMPT_SUPPORT
 #include "ompt-specific.h"
@@ -3901,6 +3904,36 @@ static void __kmp_free_moldable_task_deque(kmp_thread_data_t *thread_data) {
 }
 #endif
 
+// Assumes input mask is zeroed. Returns -1 if no valid mask was found
+static int id_to_mask_i(kmp_affin_mask_t *mask, int *ids) {
+    kmp_affinity_ids_t tmp_ids;
+    kmp_affinity_attrs_t tmp_attrs;
+
+    unsigned i;
+    int j;
+    bool same = true;
+    KMP_CPU_SET_ITERATE(i, __kmp_affin_fullMask) {
+      if (!KMP_CPU_ISSET(i, __kmp_affin_fullMask)) {
+        continue;
+      }
+      KMP_CPU_SET(i, mask);
+      __kmp_affinity_get_mask_topology_info(mask, tmp_ids, tmp_attrs);
+      KMP_CPU_CLR(i, mask);
+
+      for(j = 0; j < KMP_HW_CORE; j++) {
+        if (ids[j] != tmp_ids[j]) {
+          same = false;
+          break;
+        }
+      }
+
+      if (same)
+        return i;
+    }
+
+    return -1;
+}
+
 // __kmp_realloc_task_threads_data:
 // Allocates a threads_data array for a task team, either by allocating an
 // initial array or enlarging an existing array.  Only the first thread to get
@@ -3999,25 +4032,129 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
         // parallel region will exhibit the same behavior as previous region.
         thread_data->td.td_deque_last_stolen = -1;
       }
-#if KMP_MOLDABILITY
-      if (i < 3) {
-        int denominator = 1;
-        int k = i + 1;
-        while (k >>= 1) denominator <<= 1;
-
-        __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
-        thread_data->td.td_moldable_team_size = team->t.t_nproc / denominator;
-        KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_mask);
-        KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_mask);
-
-        int offset = (1 + i - denominator) * team->t.t_nproc / denominator;
-
-        for (int j = offset; j < offset + thread_data->td.td_moldable_team_size; j++) {
-          KMP_CPU_SET(j, thread_data->td.td_moldable_team_affin_mask);
-        }
-      }
-#endif
     }
+#if KMP_MOLDABILITY
+    // The number of levels in the "hierarchy of moldable teams" is currently hardcoded
+    int moldable_levels = 2;
+    KMP_DEBUG_ASSERT(__kmp_topology);
+
+    int depth = __kmp_topology->get_depth();
+    KMP_DEBUG_ASSERT(moldable_levels <= depth);
+
+    KMPAffinity::Mask* tmp_mask;
+    KMP_CPU_ALLOC(tmp_mask);
+    KMP_CPU_ZERO(tmp_mask);
+
+    kmp_affinity_ids_t tmp_ids;
+    kmp_affinity_attrs_t tmp_attrs;
+
+
+    // Represents the maximum value of every position of
+    // an id (kmp_affinity_ids_t). We assume every id has -1 in the same positions.
+    int max_id[KMP_HW_LAST];
+    for(int l = 0; l < KMP_HW_LAST; l++) { max_id[l] = -1; }
+
+    unsigned ii;
+    KMP_CPU_SET_ITERATE(ii, __kmp_affin_fullMask) {
+      if (!KMP_CPU_ISSET(ii, __kmp_affin_fullMask)) {
+        continue;
+      }
+      KMP_CPU_SET(ii, tmp_mask);
+      __kmp_affinity_get_mask_topology_info(tmp_mask, tmp_ids, tmp_attrs);
+      KMP_CPU_CLR(ii, tmp_mask);
+
+      for(int j = 0; j < KMP_HW_LAST; j++) {
+        if (max_id[j] < tmp_ids[j])
+          max_id[j] = tmp_ids[j];
+      }
+    }
+
+
+    int cur_id[KMP_HW_LAST];
+    for(int l = 0; l < KMP_HW_LAST; l++) {
+      if (max_id[l] == -1) {
+        cur_id[l] = -1;
+      } else {
+        cur_id[l] = 0;
+      }
+    }
+
+    // Index into the current master thread of each team;
+    i = -1;
+    int actual_levels = 0;
+    // Each level is created seperately, in a breadth first search order.
+    for(int level = 0; level < KMP_HW_LAST; level++) {
+      if (max_id[level] == -1) {
+        // This level is not in the hierarchy.
+        continue;
+      }
+      actual_levels++;
+      if (actual_levels > moldable_levels) {
+        break;
+      }
+
+
+      kmp_thread_data_t *thread_data;
+
+      bool new_team = true;
+
+      for(;;) {
+        bool done = false;
+
+        // Find next valid thread by iterating from the lowest levels upward.
+        // Like iterating a mixed radix integer, where the radix is decided by max_id.
+        int cur_level = KMP_HW_LAST-1;
+        for(;;) {
+          int c = cur_id[cur_level];
+          int m = max_id[cur_level];
+
+          KMP_DEBUG_ASSERT(0 <= cur_level);
+
+          KMP_DEBUG_ASSERT(c <= m);
+          if (c < m) {
+            cur_id[cur_level]++;
+            // We found a new valid ID. If we moved to a different part of the
+            // hierarchy, then it's a new team.
+            if (cur_level <= level) {
+              new_team = true;
+            }
+            break;
+          } else if (c == m) {
+            if (cur_level == 0) {
+              done = true;
+              break;
+            }
+            if (m != -1) {
+              c = 0;
+            }
+            cur_level--;
+          }
+        }
+        if (done)
+          break;
+
+        if (new_team) {
+          i++;
+
+          // Allocate data needed for moldable team
+          thread_data = &(*threads_data_p)[i];
+          thread_data->td.td_thr = team->t.t_threads[i];
+          __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+          KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_mask);
+          KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_mask);
+          thread_data->td.td_moldable_team_size = 0;
+
+          new_team = false;
+        }
+
+        int j = id_to_mask_i(tmp_mask, cur_id);
+        KMP_DEBUG_ASSERT(j != -1);
+        KMP_CPU_SET(j, thread_data->td.td_moldable_team_affin_mask);
+        thread_data->td.td_moldable_team_size++;
+      }
+    }
+
+#endif
 
     KMP_MB();
     TCW_SYNC_4(task_team->tt.tt_found_tasks, TRUE);
