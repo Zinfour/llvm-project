@@ -3905,13 +3905,15 @@ static void __kmp_free_moldable_task_deque(kmp_thread_data_t *thread_data) {
 #endif
 
 // Assumes input mask is zeroed. Returns -1 if no valid mask was found
-static int id_to_mask_i(kmp_affin_mask_t *mask, int *ids) {
+static int id_to_mask_i(int *ids) {
     kmp_affinity_ids_t tmp_ids;
     kmp_affinity_attrs_t tmp_attrs;
+    kmp_affin_mask_t *mask;
+    KMP_CPU_ALLOC(mask);
+    KMP_CPU_ZERO(mask);
 
     unsigned i;
     int j;
-    bool same = true;
     KMP_CPU_SET_ITERATE(i, __kmp_affin_fullMask) {
       if (!KMP_CPU_ISSET(i, __kmp_affin_fullMask)) {
         continue;
@@ -3920,7 +3922,8 @@ static int id_to_mask_i(kmp_affin_mask_t *mask, int *ids) {
       __kmp_affinity_get_mask_topology_info(mask, tmp_ids, tmp_attrs);
       KMP_CPU_CLR(i, mask);
 
-      for(j = 0; j < KMP_HW_CORE; j++) {
+      bool same = true;
+      for(j = 0; j < KMP_HW_LAST; j++) {
         if (ids[j] != tmp_ids[j]) {
           same = false;
           break;
@@ -4099,10 +4102,28 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       bool new_team = true;
 
       for(;;) {
-        bool done = false;
+        if (new_team) {
+          i++;
+
+          // Allocate data needed for moldable team
+          thread_data = &(*threads_data_p)[i];
+          thread_data->td.td_thr = team->t.t_threads[i];
+          __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+          KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_mask);
+          KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_mask);
+          thread_data->td.td_moldable_team_size = 0;
+
+          new_team = false;
+        }
+
+        int j = id_to_mask_i(cur_id);
+        KMP_DEBUG_ASSERT(j != -1);
+        KMP_CPU_SET(j, thread_data->td.td_moldable_team_affin_mask);
+        thread_data->td.td_moldable_team_size++;
 
         // Find next valid thread by iterating from the lowest levels upward.
         // Like iterating a mixed radix integer, where the radix is decided by max_id.
+        bool done = false;
         int cur_level = KMP_HW_LAST-1;
         for(;;) {
           int c = cur_id[cur_level];
@@ -4125,32 +4146,13 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
               break;
             }
             if (m != -1) {
-              c = 0;
+              cur_id[cur_level] = 0;
             }
             cur_level--;
           }
         }
         if (done)
           break;
-
-        if (new_team) {
-          i++;
-
-          // Allocate data needed for moldable team
-          thread_data = &(*threads_data_p)[i];
-          thread_data->td.td_thr = team->t.t_threads[i];
-          __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
-          KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_mask);
-          KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_mask);
-          thread_data->td.td_moldable_team_size = 0;
-
-          new_team = false;
-        }
-
-        int j = id_to_mask_i(tmp_mask, cur_id);
-        KMP_DEBUG_ASSERT(j != -1);
-        KMP_CPU_SET(j, thread_data->td.td_moldable_team_affin_mask);
-        thread_data->td.td_moldable_team_size++;
       }
     }
 
