@@ -2606,8 +2606,6 @@ void __kmp_fork_barrier(int gtid, int tid) {
       char buf[KMP_AFFIN_MASK_PRINT_LEN];
       __kmp_affinity_print_mask(buf, KMP_AFFIN_MASK_PRINT_LEN,
                                 this_thr->th.th_affin_mask);
-      KMP_INFORM(BoundToOSProcSet, "KMP_SET_AFFINITY", (kmp_int32)getpid(),
-                gtid, gtid, buf);
     }
     __kmp_set_system_affinity(this_thr->th.th_affin_mask, TRUE);
     this_thr->th.th_set_affin_mask = NULL;

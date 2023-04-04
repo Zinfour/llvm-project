@@ -459,6 +459,9 @@ volatile kmp_team_t *__kmp_team_pool = NULL;
 volatile kmp_team_t **__kmp_extra_teams = NULL;
 volatile int __kmp_extra_teams_n = 0;
 volatile kmp_futex_lock_t *__kmp_extra_teams_locks = NULL;
+
+KMP_BOOTSTRAP_LOCK_INIT(__kmp_task_stats_lock);
+kmp_task_stats_t *__kmp_task_stats_list = NULL;
 #endif
 
 KMP_ALIGN_CACHE

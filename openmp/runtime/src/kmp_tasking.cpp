@@ -567,7 +567,42 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
     do {
       k = __kmp_get_random(thread) % task_team->tt.tt_nproc;
     } while (!__kmp_give_task(task_team->tt.tt_threads_data[k].td.td_thr, k, task, 0));
-    
+
+    bool done = false;
+    kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
+    while (curr_task_stats != NULL) {
+      if (strcmp(curr_task_stats->ts.ts_ident->psource, taskdata->td_ident->psource)) {
+        taskdata->td_task_stats = curr_task_stats;
+        done = true;
+        break;
+      }
+      curr_task_stats = curr_task_stats->ts.ts_previous;
+    }
+    if (!done) {
+      
+      __kmp_acquire_bootstrap_lock(&__kmp_task_stats_lock);
+      kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
+      while (curr_task_stats != NULL) {
+        if (strcmp(curr_task_stats->ts.ts_ident->psource, taskdata->td_ident->psource)) {
+          taskdata->td_task_stats = curr_task_stats;
+          done = true;
+          break;
+        }
+        curr_task_stats = curr_task_stats->ts.ts_previous;
+      }
+
+      if (!done) {
+        kmp_task_stats_t *new_task_stats = (kmp_task_stats_t *) __kmp_allocate(sizeof(kmp_task_stats_t));
+        new_task_stats->ts.ts_ident = taskdata->td_ident;
+        new_task_stats->ts.ts_previous = __kmp_task_stats_list;
+        new_task_stats->ts.ts_cost = (int *) __kmp_allocate(sizeof(int) * task_team->tt.tt_nproc);
+
+        taskdata->td_task_stats = new_task_stats;
+        __kmp_task_stats_list = new_task_stats;
+
+      }
+      __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
+    }
   } else {
 #endif
   // No lock needed since only owner can allocate. If the task is hidden_helper,
@@ -3508,24 +3543,36 @@ static inline int __kmp_execute_tasks_template(
 #endif /* USE_ITT_BUILD && USE_ITT_NOTIFY */
 
 #if KMP_MOLDABILITY
-      if (KMP_TASK_TO_TASKDATA(task)->td_moldable) {
-
+      kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+      if (taskdata->td_moldable) {
         thread->th.th_moldable_invoke_routine = task->routine;
 
         task->routine = __kmp_invoke_task_dummy;
         thread->th.th_set_nproc = threads_data[tid].td.td_moldable_team_size;
+        // set this threads affinity
         kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
         thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_mask;
         __kmp_set_system_affinity(thread->th.th_affin_mask, true);
-        
+
+        kmp_uint64 start_time = __kmp_hardware_timestamp();
+
         __kmp_invoke_task(gtid, task, current_task);
 
+        kmp_uint64 end_time = __kmp_hardware_timestamp();
+
+        kmp_uint64 execution_time = end_time - start_time;
+
+        kmp_uint64 cost = execution_time * threads_data[tid].td.td_moldable_team_size;
+
+        KA_TRACE(1, ("executing moldable task took: %ld, cost: %ld\n", execution_time, cost));
+        taskdata->td_task_stats->ts.ts_cost[tid] = cost;
         task->routine = thread->th.th_moldable_invoke_routine;
         thread->th.th_moldable_invoke_routine = NULL;
+        // restore this threads affinity
         thread->th.th_affin_mask = old_affin_mask;
         __kmp_set_system_affinity(thread->th.th_affin_mask, true);
-        __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
 
+        __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
         kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_mask;
         kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
         int i;
@@ -3903,7 +3950,7 @@ static void __kmp_free_moldable_task_deque(kmp_thread_data_t *thread_data) {
 #endif // BUILD_TIED_TASK_STACK
 }
 #endif
-
+#if KMP_MOLDABILITY
 // Assumes input mask is zeroed. Returns -1 if no valid mask was found
 static int id_to_mask_i(int *ids) {
     kmp_affinity_ids_t tmp_ids;
@@ -3936,6 +3983,7 @@ static int id_to_mask_i(int *ids) {
 
     return -1;
 }
+#endif
 
 // __kmp_realloc_task_threads_data:
 // Allocates a threads_data array for a task team, either by allocating an
@@ -4108,7 +4156,9 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
           // Allocate data needed for moldable team
           thread_data = &(*threads_data_p)[i];
           thread_data->td.td_thr = team->t.t_threads[i];
-          __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+          if (UNLIKELY(thread_data->td.td_moldable_deque == NULL)) {
+            __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data);
+          }
           KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_mask);
           KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_mask);
           thread_data->td.td_moldable_team_size = 0;

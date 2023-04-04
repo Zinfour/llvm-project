@@ -261,6 +261,7 @@ typedef struct ident {
 
 // Some forward declarations.
 typedef union kmp_team kmp_team_t;
+typedef union kmp_task_stats kmp_task_stats_t;
 typedef struct kmp_taskdata kmp_taskdata_t;
 typedef union kmp_task_team kmp_task_team_t;
 typedef union kmp_team kmp_team_p;
@@ -2587,6 +2588,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
   kmp_target_data_t td_target_data;
 #if KMP_MOLDABILITY
   bool td_moldable;
+  kmp_task_stats_t *td_task_stats;
 #endif
 }; // struct kmp_taskdata
 
@@ -3038,6 +3040,19 @@ union KMP_ALIGN_CACHE kmp_team {
   double t_align; /* use worst case alignment */
   char t_pad[KMP_PAD(kmp_base_team_t, CACHE_LINE)];
 };
+#if KMP_MOLDABILITY
+typedef struct KMP_ALIGN_CACHE kmp_base_task_stats {
+  ident_t *ts_ident;
+  int *ts_cost;
+  kmp_task_stats *ts_previous;
+} kmp_base_task_stats_t;
+
+union KMP_ALIGN_CACHE kmp_task_stats {
+  kmp_base_task_stats_t ts;
+  double ts_align; /* use worst case alignment */
+  char ts_pad[KMP_PAD(kmp_base_task_stats_t, CACHE_LINE)];
+};
+#endif
 
 typedef union KMP_ALIGN_CACHE kmp_time_global {
   double dt_align; /* use worst case alignment */
@@ -3399,6 +3414,9 @@ extern kmp_info_t *__kmp_thread_pool_insert_pt;
 extern volatile kmp_team_t ** __kmp_extra_teams;
 extern volatile int __kmp_extra_teams_n;
 extern volatile kmp_futex_lock_t * __kmp_extra_teams_locks;
+
+extern kmp_bootstrap_lock_t __kmp_task_stats_lock;
+extern kmp_task_stats_t *__kmp_task_stats_list;
 #endif
 
 // total num threads reachable from some root thread including all root threads
