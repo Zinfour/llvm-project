@@ -3978,9 +3978,11 @@ static int id_to_mask_i(int *ids) {
       }
 
       if (same)
+        KMP_CPU_FREE(mask);
         return i;
     }
 
+    KMP_CPU_FREE(mask);
     return -1;
 }
 #endif
@@ -4154,6 +4156,10 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
           i++;
 
           // Allocate data needed for moldable team
+
+          // Each moldable team has a corresponding master thread. One thread
+          // handling multiple moldable teams is not allowed yet.
+          KMP_DEBUG_ASSERT(i < nthreads);
           thread_data = &(*threads_data_p)[i];
           thread_data->td.td_thr = team->t.t_threads[i];
           if (UNLIKELY(thread_data->td.td_moldable_deque == NULL)) {
