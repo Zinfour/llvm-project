@@ -4087,12 +4087,10 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       }
     }
 #if KMP_MOLDABILITY
-    // The number of levels in the "hierarchy of moldable teams" is currently hardcoded
-    int moldable_levels = 2;
     KMP_DEBUG_ASSERT(__kmp_topology);
 
     int depth = __kmp_topology->get_depth();
-    KMP_DEBUG_ASSERT(moldable_levels <= depth);
+    KMP_DEBUG_ASSERT(__kmp_moldable_levels <= depth);
 
     KMPAffinity::Mask* tmp_mask;
     KMP_CPU_ALLOC(tmp_mask);
@@ -4142,7 +4140,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
         continue;
       }
       actual_levels++;
-      if (actual_levels > moldable_levels) {
+      if (actual_levels > __kmp_moldable_levels) {
         break;
       }
 

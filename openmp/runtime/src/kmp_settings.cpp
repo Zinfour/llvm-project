@@ -668,6 +668,21 @@ static void __kmp_stg_print_nteams(kmp_str_buf_t *buffer, char const *name,
   __kmp_stg_print_int(buffer, name, __kmp_nteams);
 } // __kmp_stg_print_nteams
 
+#if KMP_MOLDABILITY
+static void __kmp_stg_parse_moldable_levels(char const *name, char const *value,
+                                   void *data) {
+  // TODO: Is KMP_HW_LAST the correct upper bound?
+  __kmp_stg_parse_int(name, value, 1, KMP_HW_LAST, &__kmp_moldable_levels);
+  K_DIAG(1, ("__kmp_moldable_levels == %d\n", __kmp_moldable_levels));
+} // __kmp_stg_parse_moldable_levels
+
+
+static void __kmp_stg_print_moldable_levels(kmp_str_buf_t *buffer, char const *name,
+                                   void *data) {
+  __kmp_stg_print_int(buffer, name, __kmp_moldable_levels);
+} // __kmp_stg_print_moldable_levels
+#endif
+
 // -----------------------------------------------------------------------------
 // OMP_TEAMS_THREAD_LIMIT
 static void __kmp_stg_parse_teams_th_limit(char const *name, char const *value,
@@ -5400,6 +5415,10 @@ static kmp_setting_t __kmp_stg_table[] = {
      __kmp_stg_print_teams_thread_limit, NULL, 0, 0},
     {"OMP_NUM_TEAMS", __kmp_stg_parse_nteams, __kmp_stg_print_nteams, NULL, 0,
      0},
+#if KMP_MOLDABILITY
+    {"KMP_MOLDABLE_LEVELS", __kmp_stg_parse_moldable_levels, __kmp_stg_print_moldable_levels, NULL, 0,
+     0},
+#endif
     {"OMP_TEAMS_THREAD_LIMIT", __kmp_stg_parse_teams_th_limit,
      __kmp_stg_print_teams_th_limit, NULL, 0, 0},
     {"OMP_WAIT_POLICY", __kmp_stg_parse_wait_policy,

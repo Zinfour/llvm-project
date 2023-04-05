@@ -3399,6 +3399,10 @@ extern int __kmp_omp_cancellation; /* TRUE or FALSE */
 extern int __kmp_nteams;
 extern int __kmp_teams_thread_limit;
 
+#if KMP_MOLDABILITY
+extern int __kmp_moldable_levels;
+#endif
+
 /* ------------------------------------------------------------------------- */
 
 /* the following are protected by the fork/join lock */
