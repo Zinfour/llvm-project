@@ -563,50 +563,51 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   thread_data = &task_team->tt.tt_threads_data[tid];
 #if KMP_MOLDABILITY
   if (taskdata->td_moldable) {
+
+    bool done = false;
+    kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
+    while (curr_task_stats != NULL) {
+      if (strcmp(curr_task_stats->ts.ts_ident->psource, taskdata->td_ident->psource)  == 0) {
+        taskdata->td_task_stats = curr_task_stats;
+        done = true;
+        break;
+      }
+      curr_task_stats = curr_task_stats->ts.ts_previous;
+    }
+    if (!done) {
+      
+      __kmp_acquire_bootstrap_lock(&__kmp_task_stats_lock);
+      kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
+      int len = 0;
+      while (curr_task_stats != NULL) {
+        len += 1;
+        if (strcmp(curr_task_stats->ts.ts_ident->psource, taskdata->td_ident->psource) == 0) {
+          taskdata->td_task_stats = curr_task_stats;
+          done = true;
+          break;
+        }
+        curr_task_stats = curr_task_stats->ts.ts_previous;
+      }
+
+      if (!done) {
+        kmp_task_stats_t *new_task_stats = (kmp_task_stats_t *) __kmp_allocate(sizeof(kmp_task_stats_t));
+        new_task_stats->ts.ts_ident = taskdata->td_ident;
+        new_task_stats->ts.ts_previous = __kmp_task_stats_list;
+        new_task_stats->ts.ts_cost = (kmp_uint64 *) __kmp_allocate(sizeof(kmp_uint64) * task_team->tt.tt_nproc);
+
+        taskdata->td_task_stats = new_task_stats;
+        __kmp_task_stats_list = new_task_stats;
+
+        KA_TRACE(1, ("__kmp_push_task: T#%d added new task_stats; stats_length=%d, cost_length=%d, previous=%p, new=%p, psource=%s\n",
+                      gtid, len + 1, task_team->tt.tt_nproc, new_task_stats->ts.ts_previous, new_task_stats, taskdata->td_ident->psource));
+      }
+      __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
+    }
+
     int k;
     do {
       k = __kmp_get_random(thread) % task_team->tt.tt_nproc;
     } while (!__kmp_give_task(task_team->tt.tt_threads_data[k].td.td_thr, k, task, 0));
-
-    // bool done = false;
-    // kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
-    // while (curr_task_stats != NULL) {
-    //   if (strcmp(curr_task_stats->ts.ts_ident->psource, taskdata->td_ident->psource)) {
-    //     taskdata->td_task_stats = curr_task_stats;
-    //     done = true;
-    //     break;
-    //   }
-    //   curr_task_stats = curr_task_stats->ts.ts_previous;
-    // }
-    // if (!done) {
-      
-    //   __kmp_acquire_bootstrap_lock(&__kmp_task_stats_lock);
-    //   kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
-    //   int len = 0;
-    //   while (curr_task_stats != NULL) {
-    //     len += 1;
-    //     if (strcmp(curr_task_stats->ts.ts_ident->psource, taskdata->td_ident->psource)) {
-    //       taskdata->td_task_stats = curr_task_stats;
-    //       done = true;
-    //       break;
-    //     }
-    //     curr_task_stats = curr_task_stats->ts.ts_previous;
-    //   }
-
-    //   if (!done) {
-    //     kmp_task_stats_t *new_task_stats = (kmp_task_stats_t *) __kmp_allocate(sizeof(kmp_task_stats_t));
-    //     new_task_stats->ts.ts_ident = taskdata->td_ident;
-    //     new_task_stats->ts.ts_previous = __kmp_task_stats_list;
-    //     new_task_stats->ts.ts_cost = (int *) __kmp_allocate(sizeof(int) * task_team->tt.tt_nproc);
-
-    //     taskdata->td_task_stats = new_task_stats;
-    //     __kmp_task_stats_list = new_task_stats;
-
-    //     KA_TRACE(1, ("__kmp_push_task: T#%d added new task_stats; stats_length=%d, cost_length=%d, previous=%p, new=%p,\n",
-    //                   gtid, len + 1, task_team->tt.tt_nproc, new_task_stats->ts.ts_previous, new_task_stats));
-    //   }
-    //   __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
-    // }
   } else {
 #endif
   // No lock needed since only owner can allocate. If the task is hidden_helper,
@@ -1671,9 +1672,7 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
     }
   }
 #if KMP_MOLDABILITY
-if (flags->moldable) {
-  taskdata->td_moldable = true;
-}
+  taskdata->td_moldable = flags->moldable;
 #endif
 
   KA_TRACE(20, ("__kmp_task_alloc(exit): T#%d created task %p parent=%p\n",
@@ -1950,51 +1949,11 @@ static void __kmp_invoke_task(kmp_int32 gtid, kmp_task_t *task,
   return;
 }
 #if KMP_MOLDABILITY
-static void fork_call_helper(ident_t *loc, kmp_int32 argc, kmpc_micro microtask, ...) {
-  int gtid = __kmp_entry_gtid();
 
-  {
-    va_list ap;
-    va_start(ap, microtask);
-
-    __kmp_fork_call(loc, gtid, fork_context_intel, argc,
-                    VOLATILE_CAST(microtask_t) microtask, // "wrapped" task
-                    VOLATILE_CAST(launch_t) __kmp_invoke_task_func,
-                    kmp_va_addr_of(ap));
-    __kmp_join_call(loc, gtid
-#if OMPT_SUPPORT
-                    ,
-                    fork_context_intel
-#endif
-    );
-
-    va_end(ap);
-  }
-}
 static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task) {
   kmp_info_t *thread = __kmp_threads[*gtid];
+  __kmp_invoke_task(*gtid, (kmp_task_t *) task, thread->th.th_current_task);
 
-  KMP_DEBUG_ASSERT(thread->th.th_moldable_invoke_routine);
-  KMP_DEBUG_ASSERT(thread->th.th_moldable_invoke_routine == thread->th.th_team->t.t_threads[0]->th.th_moldable_invoke_routine)
-  
-
-
-  kmp_task_team_t *tt = thread->th.th_task_team;
-  KMP_DEBUG_ASSERT(tt != NULL);
-  (*(thread->th.th_moldable_invoke_routine))(*gtid, task);
-}
-
-static int __kmp_invoke_task_dummy(int gtid, void *task) {
-  kmp_info_t *thread = __kmp_threads[gtid];
-
-  KMP_DEBUG_ASSERT(thread->th.th_moldable_invoke_routine);
-
-  kmp_task_team_t *tt = thread->th.th_task_team;
-  KMP_DEBUG_ASSERT(tt != NULL);
-  KMP_DEBUG_ASSERT(thread->th.th_set_nproc > 0);
-  fork_call_helper(thread->th.th_ident, 1, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task);
-
-  return 1;
 }
 
 #endif
@@ -3558,23 +3517,21 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
       kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
       if (taskdata->td_moldable) {
-        thread->th.th_moldable_invoke_routine = task->routine;
-
-        task->routine = __kmp_invoke_task_dummy;
-        thread->th.th_set_nproc = threads_data[tid].td.td_moldable_team_size;
-
         KMP_DEBUG_ASSERT(!taskdata->td_flags.native);
         KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_size >= 1);
         
-        // KA_TRACE(1, ("starting execution of moldable task: task=%p, routine=%p, team_size=%d\n", task, thread->th.th_moldable_invoke_routine, thread->th.th_set_nproc));
+        KA_TRACE(1, ("starting execution of moldable task: task=%p, routine=%p, team_size=%d\n", task, task->routine, threads_data[tid].td.td_moldable_team_size));
         // set this threads affinity
         kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
         thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_mask;
         __kmp_set_system_affinity(thread->th.th_affin_mask, true);
+        thread->th.th_set_affin_mask = thread->th.th_affin_mask;
 
-        // kmp_uint64 start_time = __kmp_hardware_timestamp();
+        kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
+        kmp_uint64 start_time = __kmp_hardware_timestamp();
 
-        __kmp_invoke_task(gtid, task, current_task);
+        __kmp_push_num_teams(taskdata->td_ident, gtid, 1, threads_data[tid].td.td_moldable_team_size);
+        __kmpc_fork_teams(taskdata->td_ident, 1, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task);
         
         __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
         kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_mask;
@@ -3586,20 +3543,18 @@ static inline int __kmp_execute_tasks_template(
           }
         }
         __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-
-        thread->th.th_set_nproc = 0;
-        // kmp_uint64 end_time = __kmp_hardware_timestamp();
-
-        // kmp_uint64 execution_time = end_time - start_time;
-
-        // kmp_uint64 cost = execution_time * threads_data[tid].td.td_moldable_team_size;
-
-        // KA_TRACE(1, ("executing moldable task took: %ld, cost: %ld\n", execution_time, cost));
-        // KMP_DEBUG_ASSERT(taskdata->td_task_stats != NULL)
-        // taskdata->td_task_stats->ts.ts_cost[tid] = cost;
         
-        task->routine = thread->th.th_moldable_invoke_routine;
-        thread->th.th_moldable_invoke_routine = NULL;
+        KMP_DEBUG_ASSERT(thread->th.th_set_nproc == 0 || thread->th.th_set_nproc == threads_data[tid].td.td_moldable_team_size);
+        kmp_uint64 end_time = __kmp_hardware_timestamp();
+
+        kmp_uint64 execution_time = end_time - start_time;
+
+        kmp_uint64 cost = execution_time * threads_data[tid].td.td_moldable_team_size;
+        
+        // KA_TRACE(1, ("%d: executing moldable task took: %ld, cost: %ld\n", tid, execution_time, cost));
+        KMP_DEBUG_ASSERT(current_task_stats != NULL);
+        current_task_stats->ts.ts_cost[tid] = cost;
+
         // restore this threads affinity
         thread->th.th_affin_mask = old_affin_mask;
         __kmp_set_system_affinity(thread->th.th_affin_mask, true);

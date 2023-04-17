@@ -1035,14 +1035,6 @@ static void __kmp_fork_team_threads(kmp_root_t *root, kmp_team_t *team,
       }
     }
   }
-#if KMP_MOLDABILITY
-  if (master_th->th.th_moldable_invoke_routine != NULL) {
-    for (i = 0; i < team->t.t_nproc; i++) {
-      kmp_info_t *thr = team->t.t_threads[i];
-      thr->th.th_moldable_invoke_routine = master_th->th.th_moldable_invoke_routine;
-    }
-  }
-#endif
   KMP_MB();
 }
 
@@ -5149,10 +5141,10 @@ static void __kmp_partition_places(kmp_team_t *team, int update_master_only) {
   }
 
 #if KMP_MOLDABILITY
-  if (master_th->th.th_moldable_invoke_routine != NULL) {
+  if (master_th->th.th_set_affin_mask  != NULL) {
     for (int i = 0; i < team->t.t_nproc; i++) {
-        kmp_info_t *th = team->t.t_threads[i];
-        th->th.th_set_affin_mask = master_th->th.th_affin_mask;
+      kmp_info_t *th = team->t.t_threads[i];
+      th->th.th_set_affin_mask = master_th->th.th_set_affin_mask;
     }
   }
 #endif

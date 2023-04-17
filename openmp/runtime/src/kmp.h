@@ -2839,7 +2839,6 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   // tasking, thus safe to reap
 #if KMP_MOLDABILITY
   kmp_affin_mask_t *th_set_affin_mask;
-  kmp_routine_entry_t th_moldable_invoke_routine;
 #endif
   /* More stuff for keeping track of active/sleeping threads (this part is
      written by the worker thread) */
@@ -3043,7 +3042,7 @@ union KMP_ALIGN_CACHE kmp_team {
 #if KMP_MOLDABILITY
 typedef struct KMP_ALIGN_CACHE kmp_base_task_stats {
   ident_t *ts_ident;
-  int *ts_cost;
+  kmp_uint64 *ts_cost;
   kmp_task_stats *ts_previous;
 } kmp_base_task_stats_t;
 
