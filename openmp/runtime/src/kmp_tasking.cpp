@@ -604,10 +604,19 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
       __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
     }
 
-    int k;
-    do {
-      k = __kmp_get_random(thread) % task_team->tt.tt_nproc;
-    } while (!__kmp_give_task(task_team->tt.tt_threads_data[k].td.td_thr, k, task, 0));
+    int k = -1;
+    kmp_uint64 best_cost = UINT64_MAX;
+    for (int l = 0; l < task_team->tt.tt_nproc; l++) {
+      if (task_team->tt.tt_threads_data[l].td.td_moldable_deque == NULL) {
+        continue;
+      }
+      if (taskdata->td_task_stats->ts.ts_cost[l] < best_cost) {
+        k = l;
+        best_cost = taskdata->td_task_stats->ts.ts_cost[l];
+      }
+    }
+    KMP_DEBUG_ASSERT(k != -1);
+    KMP_DEBUG_ASSERT(__kmp_give_task(task_team->tt.tt_threads_data[k].td.td_thr, k, task, 0));
   } else {
 #endif
   // No lock needed since only owner can allocate. If the task is hidden_helper,
