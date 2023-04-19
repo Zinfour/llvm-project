@@ -1681,6 +1681,7 @@ kmp_task_t *__kmp_task_alloc(ident_t *loc_ref, kmp_int32 gtid,
     }
   }
 #if KMP_MOLDABILITY
+  KMP_DEBUG_ASSERT2(!(flags->moldable && !flags->tiedness), "Tasks cannot be both untied and moldable");
   taskdata->td_moldable = flags->moldable;
 #endif
 
