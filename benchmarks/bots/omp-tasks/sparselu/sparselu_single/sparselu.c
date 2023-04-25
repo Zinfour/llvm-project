@@ -27,6 +27,8 @@
 #include "bots.h"
 #include "sparselu.h"
 
+int task_counter = 0;
+int function_counter = 0;
 /***********************************************************************
  * checkmat: 
  **********************************************************************/
@@ -181,6 +183,17 @@ void bdiv(float *diag, float *row)
             row[i*bots_arg_size_1+j] = row[i*bots_arg_size_1+j] - row[i*bots_arg_size_1+k]*diag[k*bots_arg_size_1+j];
       }
 }
+void bdiv_par(float *diag, float *row)
+{
+   #pragma omp parallel for
+   for (int i=0; i<bots_arg_size_1; i++)
+      for (int k=0; k<bots_arg_size_1; k++)
+      {
+         row[i*bots_arg_size_1+k] = row[i*bots_arg_size_1+k] / diag[k*bots_arg_size_1+k];
+         for (int j=k+1; j<bots_arg_size_1; j++)
+            row[i*bots_arg_size_1+j] = row[i*bots_arg_size_1+j] - row[i*bots_arg_size_1+k]*diag[k*bots_arg_size_1+j];
+      }
+}
 /***********************************************************************
  * bmod: 
  **********************************************************************/
@@ -190,6 +203,14 @@ void bmod(float *row, float *col, float *inner)
    for (i=0; i<bots_arg_size_1; i++)
       for (j=0; j<bots_arg_size_1; j++)
          for (k=0; k<bots_arg_size_1; k++)
+            inner[i*bots_arg_size_1+j] = inner[i*bots_arg_size_1+j] - row[i*bots_arg_size_1+k]*col[k*bots_arg_size_1+j];
+}
+void bmod_par(float *row, float *col, float *inner)
+{
+   #pragma omp parallel for
+   for (int i=0; i<bots_arg_size_1; i++)
+      for (int j=0; j<bots_arg_size_1; j++)
+         for (int k=0; k<bots_arg_size_1; k++)
             inner[i*bots_arg_size_1+j] = inner[i*bots_arg_size_1+j] - row[i*bots_arg_size_1+k]*col[k*bots_arg_size_1+j];
 }
 /***********************************************************************
@@ -202,6 +223,22 @@ void fwd(float *diag, float *col)
       for (k=0; k<bots_arg_size_1; k++) 
          for (i=k+1; i<bots_arg_size_1; i++)
             col[i*bots_arg_size_1+j] = col[i*bots_arg_size_1+j] - diag[i*bots_arg_size_1+k]*col[k*bots_arg_size_1+j];
+}
+
+void fwd_par(float *diag, float *col)
+{
+   #pragma omp parallel
+   {
+   #pragma omp atomic
+      function_counter += 1;
+   #pragma omp for
+      for (int j=0; j<bots_arg_size_1; j++) {
+         for (int k=0; k<bots_arg_size_1; k++)
+            for (int i=k+1; i<bots_arg_size_1; i++) {
+               col[i*bots_arg_size_1+j] = col[i*bots_arg_size_1+j] - diag[i*bots_arg_size_1+k]*col[k*bots_arg_size_1+j];
+            }
+      }
+   }
 }
 
 
@@ -225,16 +262,20 @@ void sparselu_par_call(float **BENCH)
    {
       lu0(BENCH[kk*bots_arg_size+kk]);
       for (jj=kk+1; jj<bots_arg_size; jj++)
-         if (BENCH[kk*bots_arg_size+jj] != NULL)
-            #pragma omp task untied firstprivate(kk, jj) shared(BENCH)
-         {
-            fwd(BENCH[kk*bots_arg_size+kk], BENCH[kk*bots_arg_size+jj]);
+         if (BENCH[kk*bots_arg_size+jj] != NULL) {
+
+            #pragma omp atomic
+            task_counter += 1;
+            #pragma omp task moldable firstprivate(kk, jj) shared(BENCH)
+            {
+               fwd_par(BENCH[kk * bots_arg_size + kk], BENCH[kk * bots_arg_size + jj]);
+            }
          }
       for (ii=kk+1; ii<bots_arg_size; ii++) 
          if (BENCH[ii*bots_arg_size+kk] != NULL)
-            #pragma omp task untied firstprivate(kk, ii) shared(BENCH)
+         #pragma omp task moldable firstprivate(kk, ii) shared(BENCH)
          {
-            bdiv (BENCH[kk*bots_arg_size+kk], BENCH[ii*bots_arg_size+kk]);
+            bdiv_par(BENCH[kk*bots_arg_size+kk], BENCH[ii*bots_arg_size+kk]);
          }
 
       #pragma omp taskwait
@@ -243,44 +284,57 @@ void sparselu_par_call(float **BENCH)
          if (BENCH[ii*bots_arg_size+kk] != NULL)
             for (jj=kk+1; jj<bots_arg_size; jj++)
                if (BENCH[kk*bots_arg_size+jj] != NULL)
-               #pragma omp task untied firstprivate(kk, jj, ii) shared(BENCH)
+               #pragma omp task moldable firstprivate(kk, jj, ii) shared(BENCH)
                {
                      if (BENCH[ii*bots_arg_size+jj]==NULL) BENCH[ii*bots_arg_size+jj] = allocate_clean_block();
-                     bmod(BENCH[ii*bots_arg_size+kk], BENCH[kk*bots_arg_size+jj], BENCH[ii*bots_arg_size+jj]);
+                     bmod_par(BENCH[ii*bots_arg_size+kk], BENCH[kk*bots_arg_size+jj], BENCH[ii*bots_arg_size+jj]);
                }
 
       #pragma omp taskwait
    }
-   bots_message(" completed!\n");
+   bots_message(" completed! %d task calls and ran the function %d times, forlength=%d\n", task_counter, function_counter, bots_arg_size_1);
 }
 
 
 void sparselu_seq_call(float **BENCH)
 {
    int ii, jj, kk;
-
-   for (kk=0; kk<bots_arg_size; kk++)
+#pragma omp parallel
+#pragma omp single nowait
+#pragma omp task
+   for (kk=0; kk<bots_arg_size; kk++) 
    {
       lu0(BENCH[kk*bots_arg_size+kk]);
       for (jj=kk+1; jj<bots_arg_size; jj++)
-         if (BENCH[kk*bots_arg_size+jj] != NULL)
-         {
-            fwd(BENCH[kk*bots_arg_size+kk], BENCH[kk*bots_arg_size+jj]);
+         if (BENCH[kk*bots_arg_size+jj] != NULL) {
+
+            #pragma omp atomic
+            task_counter += 1;
+            #pragma omp task firstprivate(kk, jj) shared(BENCH)
+            {
+               fwd(BENCH[kk * bots_arg_size + kk], BENCH[kk * bots_arg_size + jj]);
+            }
          }
-      for (ii=kk+1; ii<bots_arg_size; ii++)
+      for (ii=kk+1; ii<bots_arg_size; ii++) 
          if (BENCH[ii*bots_arg_size+kk] != NULL)
+         #pragma omp task firstprivate(kk, ii) shared(BENCH)
          {
-            bdiv (BENCH[kk*bots_arg_size+kk], BENCH[ii*bots_arg_size+kk]);
+            bdiv(BENCH[kk*bots_arg_size+kk], BENCH[ii*bots_arg_size+kk]);
          }
+
+      #pragma omp taskwait
+
       for (ii=kk+1; ii<bots_arg_size; ii++)
          if (BENCH[ii*bots_arg_size+kk] != NULL)
             for (jj=kk+1; jj<bots_arg_size; jj++)
                if (BENCH[kk*bots_arg_size+jj] != NULL)
+               #pragma omp task firstprivate(kk, jj, ii) shared(BENCH)
                {
                      if (BENCH[ii*bots_arg_size+jj]==NULL) BENCH[ii*bots_arg_size+jj] = allocate_clean_block();
                      bmod(BENCH[ii*bots_arg_size+kk], BENCH[kk*bots_arg_size+jj], BENCH[ii*bots_arg_size+jj]);
                }
 
+      #pragma omp taskwait
    }
 }
 
