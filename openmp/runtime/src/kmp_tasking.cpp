@@ -4188,7 +4188,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
           thread_data->td.td_thr = team->t.t_threads[thread_i];
 
           if (UNLIKELY(thread_data->td.td_moldable_deques[team_i] == NULL)) {
-            __kmp_alloc_moldable_task_deque(team->t.t_threads[i], thread_data, team_i);
+            __kmp_alloc_moldable_task_deque(team->t.t_threads[thread_i], thread_data, team_i);
           }
           KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0);
           KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == 0);
