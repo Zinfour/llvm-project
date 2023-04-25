@@ -2594,7 +2594,9 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
 
 // Make sure padding above worked
 KMP_BUILD_ASSERT(sizeof(kmp_taskdata_t) % sizeof(void *) == 0);
-
+#if KMP_MOLDABILITY
+#define MAX_TEAMS_PER_THREAD 4
+#endif
 // Data for task team but per thread
 typedef struct kmp_base_thread_data {
   kmp_info_p *td_thr; // Pointer back to thread info
@@ -2610,16 +2612,15 @@ typedef struct kmp_base_thread_data {
   // GEH: shouldn't this be volatile since used in while-spin?
   kmp_int32 td_deque_last_stolen; // Thread number of last successful steal
 #if KMP_MOLDABILITY
-  kmp_bootstrap_lock_t td_moldable_deque_lock; // Lock for accessing deque
-  kmp_taskdata_t *
-      *td_moldable_deque; // Deque of tasks encountered by td_thr, dynamically allocated
-  kmp_int32 td_moldable_deque_size; // Size of deck
-  kmp_uint32 td_moldable_deque_head; // Head of deque (will wrap)
-  kmp_uint32 td_moldable_deque_tail; // Tail of deque (will wrap)
-  kmp_int32 td_moldable_deque_ntasks; // Number of tasks in deque
+  kmp_bootstrap_lock_t td_moldable_deque_locks[MAX_TEAMS_PER_THREAD]; // Lock for accessing deque
+  kmp_taskdata_t **td_moldable_deques[MAX_TEAMS_PER_THREAD]; // Deque of tasks encountered by td_thr, dynamically allocated
+  kmp_int32 td_moldable_deque_sizes[MAX_TEAMS_PER_THREAD]; // Size of deck
+  kmp_uint32 td_moldable_deque_heads[MAX_TEAMS_PER_THREAD]; // Head of deque (will wrap)
+  kmp_uint32 td_moldable_deque_tails[MAX_TEAMS_PER_THREAD]; // Tail of deque (will wrap)
+  kmp_int32 td_moldable_deque_ntaskss[MAX_TEAMS_PER_THREAD]; // Number of tasks in deque
 
-  kmp_int32 td_moldable_team_size;
-  kmp_affin_mask_t *td_moldable_team_affin_mask;
+  kmp_int32 td_moldable_team_sizes[MAX_TEAMS_PER_THREAD];
+  kmp_affin_mask_t *td_moldable_team_affin_masks[MAX_TEAMS_PER_THREAD];
 #endif
 #ifdef BUILD_TIED_TASK_STACK
   kmp_task_stack_t td_susp_tied_tasks; // Stack of suspended tied tasks for task
@@ -2634,8 +2635,8 @@ typedef struct kmp_base_thread_data {
 #define TASK_DEQUE_MASK(td) ((td).td_deque_size - 1)
 
 #if KMP_MOLDABILITY
-#define TASK_MOLDABLE_DEQUE_SIZE(td) ((td).td_moldable_deque_size)
-#define TASK_MOLDABLE_DEQUE_MASK(td) ((td).td_moldable_deque_size - 1)
+#define TASK_MOLDABLE_DEQUE_SIZE(td, team_i) ((td).td_moldable_deque_sizes[team_i])
+#define TASK_MOLDABLE_DEQUE_MASK(td, team_i) ((td).td_moldable_deque_sizes[team_i] - 1)
 #endif
 
 typedef union KMP_ALIGN_CACHE kmp_thread_data {
@@ -2683,6 +2684,7 @@ typedef struct kmp_base_task_team {
   volatile kmp_uint32
       tt_active; /* is the team still actively executing tasks */
 #if KMP_MOLDABILITY
+  int tt_moldable_teams_n;
   kmp_bootstrap_lock_t tt_moldable_teams_affinity_lock;
   kmp_affin_mask_t* tt_moldable_teams_affinity_mask;
 #endif
