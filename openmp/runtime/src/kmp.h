@@ -2619,6 +2619,7 @@ typedef struct kmp_base_thread_data {
   kmp_uint32 td_moldable_deque_tails[MAX_TEAMS_PER_THREAD]; // Tail of deque (will wrap)
   kmp_int32 td_moldable_deque_ntaskss[MAX_TEAMS_PER_THREAD]; // Number of tasks in deque
 
+  kmp_int64 td_moldable_deque_estimated_work[MAX_TEAMS_PER_THREAD]; // estimated cost of executing all tasks in the queue.
   kmp_int32 td_moldable_team_sizes[MAX_TEAMS_PER_THREAD];
   kmp_affin_mask_t *td_moldable_team_affin_masks[MAX_TEAMS_PER_THREAD];
 #endif
@@ -3029,11 +3030,6 @@ typedef struct KMP_ALIGN_CACHE kmp_base_team {
   void *t_stack_id; // team specific stack stitching id (for ittnotify)
 #endif /* USE_ITT_BUILD */
   distributedBarrier *b; // Distributed barrier data associated with team
-
-#if KMP_MOLDABILITY
-  int t_extra_team_id;
-#endif
-
 } kmp_base_team_t;
 
 union KMP_ALIGN_CACHE kmp_team {
@@ -3044,7 +3040,8 @@ union KMP_ALIGN_CACHE kmp_team {
 #if KMP_MOLDABILITY
 typedef struct KMP_ALIGN_CACHE kmp_base_task_stats {
   ident_t *ts_ident;
-  kmp_uint64 *ts_cost;
+  kmp_uint64 *ts_cost; // these are not atomics for now even
+    // though the costs are updated from multiple threads
   kmp_task_stats *ts_previous;
 } kmp_base_task_stats_t;
 
@@ -3193,9 +3190,6 @@ extern volatile int __kmp_init_common;
 extern volatile int __kmp_need_register_serial;
 extern volatile int __kmp_init_middle;
 extern volatile int __kmp_init_parallel;
-#if KMP_MOLDABILITY
-extern volatile int __kmp_init_extra_teams;
-#endif
 #if KMP_USE_MONITOR
 extern volatile int __kmp_init_monitor;
 #endif
@@ -3402,6 +3396,11 @@ extern int __kmp_teams_thread_limit;
 
 #if KMP_MOLDABILITY
 extern int __kmp_moldable_levels;
+extern int __kmp_moldable_time_method;
+extern int __kmp_moldable_exp_average;
+extern int __kmp_moldable_oversubscription_method;
+extern int __kmp_moldable_work_stealing;
+extern int __kmp_moldable_push_to_own_queue;
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -3416,10 +3415,6 @@ extern volatile kmp_team_t *__kmp_team_pool;
 extern volatile kmp_info_t *__kmp_thread_pool;
 extern kmp_info_t *__kmp_thread_pool_insert_pt;
 #if KMP_MOLDABILITY
-extern volatile kmp_team_t ** __kmp_extra_teams;
-extern volatile int __kmp_extra_teams_n;
-extern volatile kmp_futex_lock_t * __kmp_extra_teams_locks;
-
 extern kmp_bootstrap_lock_t __kmp_task_stats_lock;
 extern kmp_task_stats_t *__kmp_task_stats_list;
 #endif

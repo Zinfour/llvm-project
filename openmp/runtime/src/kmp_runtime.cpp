@@ -2644,19 +2644,8 @@ void __kmp_join_call(ident_t *loc, int gtid
   if (root->r.r_active != master_active)
     root->r.r_active = master_active;
 
-#if KMP_MOLDABILITY
-  if (team->t.t_extra_team_id != -1) {
-    // if we're using an extra team, don't free the team, just release the lock
-    KMP_DEBUG_ASSERT(__kmp_release_futex_lock(
-                         (kmp_futex_lock_t *)&__kmp_extra_teams_locks[team->t.t_extra_team_id],
-                         gtid) == KMP_LOCK_RELEASED)
-  } else {
-#endif
   __kmp_free_team(root, team USE_NESTED_HOT_ARG(
                             master_th)); // this will free worker threads
-#if KMP_MOLDABILITY
-  }
-#endif
 
   /* this race was fun to find. make sure the following is in the critical
      region otherwise assertions may fail occasionally since the old team may be
@@ -4762,9 +4751,6 @@ static void __kmp_initialize_team(kmp_team_t *team, int new_nproc,
 #endif
 
   team->t.t_control_stack_top = NULL;
-#if KMP_MOLDABILITY
-  team->t.t_extra_team_id = -1;
-#endif
   __kmp_reinitialize_team(team, new_icvs, loc);
 
   KMP_MB();
@@ -6629,31 +6615,6 @@ void __kmp_internal_end_thread(int gtid_req) {
     __kmp_hidden_helper_threads_deinitz_wait();
   }
 
-#if KMP_MOLDABILITY
-  if (TCR_4(__kmp_init_extra_teams)) {
-    TCW_SYNC_4(__kmp_init_extra_teams, FALSE);
-
-    
-    int gtid = (gtid_req >= 0) ? gtid_req : __kmp_gtid_get_specific();
-    kmp_info_t *this_thr = __kmp_thread_from_gtid(gtid);
-
-    // free and remove the extra teams
-    for (int i = 0; i < __kmp_extra_teams_n; i++) {
-      KMP_DEBUG_ASSERT(__kmp_test_futex_lock(
-          (kmp_futex_lock_t *)&__kmp_extra_teams_locks[i], gtid))
-      KMP_DEBUG_ASSERT(__kmp_release_futex_lock(
-                          (kmp_futex_lock_t *)&__kmp_extra_teams_locks[i],
-                          gtid) == KMP_LOCK_RELEASED)
-
-      __kmp_free_team(this_thr->th.th_root,
-                          (kmp_team_t *) __kmp_extra_teams[i] USE_NESTED_HOT_ARG(NULL));
-    }
-    kmpc_free(__kmp_extra_teams);
-
-    __kmp_extra_teams = NULL;
-    __kmp_extra_teams_n = 0;
-  }
-#endif
 
   KMP_MB(); /* Flush all pending memory write invalidates.  */
 
@@ -8503,11 +8464,7 @@ int __kmp_aux_get_team_num() {
     if (serialized > 1) {
       return -2; // teams region is serialized ( 1 team of 1 thread ).
     } else {
-#if KMP_MOLDABILITY
-      return team->t.t_extra_team_id;
-#else
       return team->t.t_master_tid;
-#endif
     }
   }
   return 0;

@@ -50,9 +50,6 @@ volatile int __kmp_init_parallel = FALSE;
 volatile int __kmp_init_hidden_helper = FALSE;
 volatile int __kmp_init_hidden_helper_threads = FALSE;
 volatile int __kmp_hidden_helper_team_done = FALSE;
-#if KMP_MOLDABILITY
-volatile int __kmp_init_extra_teams = FALSE;
-#endif
 #if KMP_USE_MONITOR
 volatile int __kmp_init_monitor =
     0; /* 1 - launched, 2 - actually started (Windows* OS only) */
@@ -219,6 +216,11 @@ int __kmp_teams_thread_limit = 0;
 
 #if KMP_MOLDABILITY
 int __kmp_moldable_levels = 2;
+int __kmp_moldable_time_method = 0; // 0=use hardware time, 1=use rusage.
+int __kmp_moldable_exp_average = 10; // controls the amount of smoothing.
+int __kmp_moldable_oversubscription_method = 0; // 0=no protection against oversubscription.
+int __kmp_moldable_work_stealing = 0; // 0=disabled, 1=enabled
+int __kmp_moldable_push_to_own_queue = 0; // should we give tasks to queues or puch to own queue.
 #endif
 
 #if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
@@ -460,10 +462,6 @@ volatile int __kmp_all_nth = 0;
 volatile kmp_info_t *__kmp_thread_pool = NULL;
 volatile kmp_team_t *__kmp_team_pool = NULL;
 #if KMP_MOLDABILITY
-volatile kmp_team_t **__kmp_extra_teams = NULL;
-volatile int __kmp_extra_teams_n = 0;
-volatile kmp_futex_lock_t *__kmp_extra_teams_locks = NULL;
-
 KMP_BOOTSTRAP_LOCK_INIT(__kmp_task_stats_lock);
 kmp_task_stats_t *__kmp_task_stats_list = NULL;
 #endif

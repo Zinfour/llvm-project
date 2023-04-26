@@ -18,6 +18,7 @@
 #include "kmp_taskdeps.h"
 #if KMP_MOLDABILITY
 #include "kmp_affinity.h"
+#include <sys/resource.h>
 #endif
 
 #if OMPT_SUPPORT
@@ -1971,10 +1972,30 @@ static void __kmp_invoke_task(kmp_int32 gtid, kmp_task_t *task,
 }
 #if KMP_MOLDABILITY
 
-static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task) {
+static void __kmp_get_time_helper(int *gtid, int *npr, std::atomic<kmp_uint64> *cost) {
+  struct rusage r_usage;
+  int status2 = getrusage(RUSAGE_SELF, &r_usage);
+  KMP_CHECK_SYSFAIL_ERRNO("getrusage", status2);
+  // should be ok to use relaxed here because we don't care about the order in which we
+  // add times, and our load later is and acquire so it should be fine.
+  KMP_ATOMIC_ADD_RLX(cost, r_usage.ru_utime.tv_sec * 1000000 + r_usage.ru_utime.tv_usec + r_usage.ru_stime.tv_sec * 1000000 + r_usage.ru_stime.tv_usec);
+}
+
+static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task, kmp_uint64 *cost) {
   kmp_info_t *thread = __kmp_threads[*gtid];
+  std::atomic<kmp_uint64> times_before = 0;
+  
+  if (__kmp_moldable_time_method == 1) {
+    __kmpc_fork_call(KMP_TASK_TO_TASKDATA(task)->td_ident, 1, VOLATILE_CAST(microtask_t) __kmp_get_time_helper, &times_before);
+  }
   __kmp_invoke_task(*gtid, (kmp_task_t *) task, thread->th.th_current_task);
 
+  std::atomic<kmp_uint64> times_after = 0;
+  if (__kmp_moldable_time_method == 1) {
+    __kmpc_fork_call(KMP_TASK_TO_TASKDATA(task)->td_ident, 1, VOLATILE_CAST(microtask_t) __kmp_get_time_helper, &times_after);
+    *cost = KMP_ATOMIC_LD_ACQ(&times_after) - KMP_ATOMIC_LD_ACQ(&times_before);
+  }
+  KMP_DEBUG_ASSERT(*cost >= 0);
 }
 
 #endif
@@ -3414,6 +3435,8 @@ static inline int __kmp_execute_tasks_template(
 
 #if KMP_MOLDABILITY
   int team_i;
+  kmp_uint64 start_time;
+  kmp_uint64 end_time;
 #endif
   kmp_taskdata_t *current_task = thread->th.th_current_task;
   std::atomic<kmp_int32> *unfinished_threads;
@@ -3566,10 +3589,14 @@ static inline int __kmp_execute_tasks_template(
         thread->th.th_set_affin_mask = thread->th.th_affin_mask;
 
         kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
-        kmp_uint64 start_time = __kmp_hardware_timestamp();
+
+        if (__kmp_moldable_time_method == 0) {
+          start_time = __kmp_hardware_timestamp();
+        }
 
         __kmp_push_num_teams(taskdata->td_ident, gtid, 1, threads_data[tid].td.td_moldable_team_sizes[team_i]);
-        __kmpc_fork_teams(taskdata->td_ident, 1, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task);
+        kmp_uint64 cost = 0;
+        __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
 
         __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
         kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
@@ -3583,15 +3610,16 @@ static inline int __kmp_execute_tasks_template(
         __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
         
         KMP_DEBUG_ASSERT(thread->th.th_set_nproc == 0 || thread->th.th_set_nproc == threads_data[tid].td.td_moldable_team_sizes[team_i]);
-        kmp_uint64 end_time = __kmp_hardware_timestamp();
-
-        kmp_uint64 execution_time = end_time - start_time;
-
-        kmp_uint64 cost = execution_time * threads_data[tid].td.td_moldable_team_sizes[team_i];
         
-        // KA_TRACE(1, ("%d: executing moldable task took: %ld, cost: %ld\n", tid, execution_time, cost));
+        if (__kmp_moldable_time_method == 0) {
+          end_time = __kmp_hardware_timestamp();
+          cost = (end_time - start_time) * threads_data[tid].td.td_moldable_team_sizes[team_i];
+        }
         KMP_DEBUG_ASSERT(current_task_stats != NULL);
-        current_task_stats->ts.ts_cost[tid] = cost;
+        KMP_DEBUG_ASSERT(cost >= 0);
+        kmp_uint64 before = current_task_stats->ts.ts_cost[tid];
+        current_task_stats->ts.ts_cost[tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
+        KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[tid], before, cost));
 
         // restore this threads affinity
         thread->th.th_affin_mask = old_affin_mask;
