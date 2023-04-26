@@ -3555,7 +3555,7 @@ static inline int __kmp_execute_tasks_template(
         KMP_DEBUG_ASSERT(!taskdata->td_flags.native);
         KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] >= 1);
         
-        KA_TRACE(1, ("starting execution of moldable task: task=%p, routine=%p, team_size=%d\n", task, task->routine, threads_data[tid].td.td_moldable_team_sizes));
+        KA_TRACE(1, ("starting execution of moldable task: task=%p, routine=%p, team_size=%d\n", task, task->routine, threads_data[tid].td.td_moldable_team_sizes[team_i]));
         // set this threads affinity
         kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
         thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
