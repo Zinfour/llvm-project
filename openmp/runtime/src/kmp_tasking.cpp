@@ -623,8 +623,11 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
 
     KMP_DEBUG_ASSERT(thread_k != -1);
     KMP_DEBUG_ASSERT(team_k != -1);
-    
-    KMP_DEBUG_ASSERT(__kmp_give_task(task_team->tt.tt_threads_data[thread_k].td.td_thr, thread_k, task, 0, team_k));
+#ifdef KMP_DEBUG
+    bool result =
+#endif
+    __kmp_give_task(task_team->tt.tt_threads_data[thread_k].td.td_thr, thread_k, task, 0, team_k);
+    KMP_DEBUG_ASSERT(result);
   } else {
 #endif
   // No lock needed since only owner can allocate. If the task is hidden_helper,
@@ -4113,8 +4116,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 #if KMP_MOLDABILITY
     KMP_DEBUG_ASSERT(__kmp_topology);
 
-    int depth = __kmp_topology->get_depth();
-    KMP_DEBUG_ASSERT(__kmp_moldable_levels <= depth);
+    KMP_DEBUG_ASSERT(__kmp_moldable_levels <= __kmp_topology->get_depth());
 
     KMPAffinity::Mask* tmp_mask;
     KMP_CPU_ALLOC(tmp_mask);
@@ -4914,7 +4916,7 @@ void __kmpc_give_task(kmp_task_t *ptask, kmp_int32 start = 0) {
     if (k == start_k)
       pass = pass << 1;
 
-  } while (!__kmp_give_task(thread, k, ptask, pass, -1));
+  } while (!__kmp_give_task(thread, k, ptask, pass, 0));
 
   if (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME && __kmp_wpolicy_passive) {
     // awake at least one thread to execute given task

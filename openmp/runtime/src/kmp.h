@@ -4377,10 +4377,6 @@ extern void __kmp_hidden_helper_worker_thread_wait();
 extern void __kmp_hidden_helper_worker_thread_signal();
 extern void __kmp_hidden_helper_main_thread_release();
 
-#if KMP_MOLDABILITY
-extern void __kmp_extra_teams_initialize();
-#endif
-
 // Check whether a given thread is a hidden helper thread
 #define KMP_HIDDEN_HELPER_THREAD(gtid)                                         \
   ((gtid) >= 1 && (gtid) <= __kmp_hidden_helper_threads_num)
