@@ -6418,6 +6418,26 @@ static void __kmp_internal_end(void) {
 
     __kmp_reap_task_teams();
 
+#if KMP_MOLDABILITY
+    // Free all task stats on the free list
+    kmp_task_stats_t *task_stats;
+    if (TCR_PTR(__kmp_task_stats_list) != NULL) {
+      __kmp_acquire_bootstrap_lock(&__kmp_task_stats_lock);
+      
+      while ((task_stats = __kmp_task_stats_list) != NULL) {
+
+        __kmp_task_stats_list = task_stats->ts.ts_previous;
+        task_stats->ts.ts_previous = NULL;
+        // Free threads_data if necessary
+        if (task_stats->ts.ts_cost != NULL) {
+          __kmp_free(task_stats->ts.ts_cost);
+        }
+        __kmp_free(task_stats);
+      }
+      __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
+    }
+#endif
+
 #if KMP_OS_UNIX
     // Threads that are not reaped should not access any resources since they
     // are going to be deallocated soon, so the shutdown sequence should wait

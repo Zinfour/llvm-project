@@ -18,6 +18,7 @@
 #include "kmp_taskdeps.h"
 #if KMP_MOLDABILITY
 #include "kmp_affinity.h"
+#include "kmp_io.h"
 #include <sys/resource.h>
 #endif
 
@@ -594,7 +595,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
         kmp_task_stats_t *new_task_stats = (kmp_task_stats_t *) __kmp_allocate(sizeof(kmp_task_stats_t));
         new_task_stats->ts.ts_ident = taskdata->td_ident;
         new_task_stats->ts.ts_previous = __kmp_task_stats_list;
-        new_task_stats->ts.ts_cost = (kmp_uint64 *) __kmp_allocate(sizeof(kmp_uint64) * task_team->tt.tt_nproc);
+        new_task_stats->ts.ts_cost = (kmp_uint64 *) __kmp_allocate(sizeof(kmp_uint64) * task_team->tt.tt_moldable_teams_n);
 
         taskdata->td_task_stats = new_task_stats;
         __kmp_task_stats_list = new_task_stats;
@@ -3463,9 +3464,10 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   }
   KMP_DEBUG_ASSERT(current_task_stats != NULL);
   KMP_DEBUG_ASSERT(cost >= 0);
-  kmp_uint64 before = current_task_stats->ts.ts_cost[tid];
-  current_task_stats->ts.ts_cost[tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
-  KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[tid], before, cost));
+  KMP_DEBUG_ASSERT(task_team->tt.tt_nproc * team_i + tid < task_team->tt.tt_moldable_teams_n);
+  kmp_uint64 before = current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid];
+  current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
+  KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid], before, cost));
 
   // restore this threads affinity
   thread->th.th_affin_mask = old_affin_mask;
@@ -4410,6 +4412,22 @@ void __kmp_free_task_team(kmp_info_t *thread, kmp_task_team_t *task_team) {
   // Put task team back on free list
   __kmp_acquire_bootstrap_lock(&__kmp_task_team_lock);
 
+#if KMP_MOLDABILITY
+  // we print all estimated task costs for debugging purposes
+  kmp_task_stats_t *task_stats;
+  if (task_team->tt.tt_moldable_teams_n > 0) {
+    __kmp_acquire_bootstrap_lock(&__kmp_stdio_lock);
+    while ((task_stats = __kmp_task_stats_list) != NULL) {
+      __kmp_task_stats_list = task_stats->ts.ts_previous;
+      __kmp_printf_no_lock("Task %s", task_stats->ts.ts_ident->psource);
+      for (int i = 0; i < task_team->tt.tt_moldable_teams_n; i++) {
+        __kmp_printf_no_lock(", %llu", task_stats->ts.ts_cost[i]);
+      }
+      __kmp_printf_no_lock("\n");
+    }
+    __kmp_release_bootstrap_lock(&__kmp_stdio_lock);
+  }
+#endif
   KMP_DEBUG_ASSERT(task_team->tt.tt_next == NULL);
   task_team->tt.tt_next = __kmp_free_task_teams;
   TCW_PTR(__kmp_free_task_teams, task_team);

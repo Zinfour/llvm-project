@@ -2620,6 +2620,7 @@ typedef struct kmp_base_thread_data {
   kmp_int32 td_moldable_deque_ntaskss[MAX_TEAMS_PER_THREAD]; // Number of tasks in deque
 
   kmp_int64 td_moldable_deque_estimated_work[MAX_TEAMS_PER_THREAD]; // estimated cost of executing all tasks in the queue.
+  kmp_int64 td_moldable_estimated_work; // estimated work in total assigned to thread.
   kmp_int32 td_moldable_team_sizes[MAX_TEAMS_PER_THREAD];
   kmp_affin_mask_t *td_moldable_team_affin_masks[MAX_TEAMS_PER_THREAD];
 #endif
