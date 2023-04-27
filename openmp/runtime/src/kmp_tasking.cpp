@@ -3414,6 +3414,64 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
   return task;
 }
 
+#if KMP_MOLDABILITY
+static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *thread, kmp_task_t *task, kmp_thread_data_t *threads_data) {
+  kmp_task_team_t *task_team = thread->th.th_task_team;
+  kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+  kmp_int32 tid = thread->th.th_info.ds.ds_tid;
+  kmp_uint64 start_time;
+  kmp_uint64 end_time;
+
+
+  KMP_DEBUG_ASSERT(team_i != -1);
+  KMP_DEBUG_ASSERT(!taskdata->td_flags.native);
+  KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] >= 1);
+  
+  KA_TRACE(1, ("starting execution of moldable task: task=%p, routine=%p, team_size=%d\n", task, task->routine, threads_data[tid].td.td_moldable_team_sizes[team_i]));
+  // set this threads affinity
+  kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
+  thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
+  __kmp_set_system_affinity(thread->th.th_affin_mask, true);
+  thread->th.th_set_affin_mask = thread->th.th_affin_mask;
+
+  kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
+
+  if (__kmp_moldable_time_method == 0) {
+    start_time = __kmp_hardware_timestamp();
+  }
+
+  __kmp_push_num_teams(taskdata->td_ident, gtid, 1, threads_data[tid].td.td_moldable_team_sizes[team_i]);
+  kmp_uint64 cost = 0;
+  __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
+
+  __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+  kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
+  kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+  int i;
+  KMP_CPU_SET_ITERATE(i, global_mask) {
+    if (KMP_CPU_ISSET(i, task_mask)) {
+      KMP_CPU_CLR(i, global_mask);
+    }
+  }
+  __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+  
+  KMP_DEBUG_ASSERT(thread->th.th_set_nproc == 0 || thread->th.th_set_nproc == threads_data[tid].td.td_moldable_team_sizes[team_i]);
+  
+  if (__kmp_moldable_time_method == 0) {
+    end_time = __kmp_hardware_timestamp();
+    cost = (end_time - start_time) * threads_data[tid].td.td_moldable_team_sizes[team_i];
+  }
+  KMP_DEBUG_ASSERT(current_task_stats != NULL);
+  KMP_DEBUG_ASSERT(cost >= 0);
+  kmp_uint64 before = current_task_stats->ts.ts_cost[tid];
+  current_task_stats->ts.ts_cost[tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
+  KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[tid], before, cost));
+
+  // restore this threads affinity
+  thread->th.th_affin_mask = old_affin_mask;
+  __kmp_set_system_affinity(thread->th.th_affin_mask, true);
+}
+#endif
 // __kmp_execute_tasks_template: Choose and execute tasks until either the
 // condition is statisfied (return true) or there are none left (return false).
 //
@@ -3435,8 +3493,6 @@ static inline int __kmp_execute_tasks_template(
 
 #if KMP_MOLDABILITY
   int team_i;
-  kmp_uint64 start_time;
-  kmp_uint64 end_time;
 #endif
   kmp_taskdata_t *current_task = thread->th.th_current_task;
   std::atomic<kmp_int32> *unfinished_threads;
@@ -3577,54 +3633,7 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
       kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
       if (taskdata->td_moldable) {
-        KMP_DEBUG_ASSERT(team_i != -1);
-        KMP_DEBUG_ASSERT(!taskdata->td_flags.native);
-        KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] >= 1);
-        
-        KA_TRACE(1, ("starting execution of moldable task: task=%p, routine=%p, team_size=%d\n", task, task->routine, threads_data[tid].td.td_moldable_team_sizes[team_i]));
-        // set this threads affinity
-        kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
-        thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
-        __kmp_set_system_affinity(thread->th.th_affin_mask, true);
-        thread->th.th_set_affin_mask = thread->th.th_affin_mask;
-
-        kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
-
-        if (__kmp_moldable_time_method == 0) {
-          start_time = __kmp_hardware_timestamp();
-        }
-
-        __kmp_push_num_teams(taskdata->td_ident, gtid, 1, threads_data[tid].td.td_moldable_team_sizes[team_i]);
-        kmp_uint64 cost = 0;
-        __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
-
-        __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-        kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
-        kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
-        int i;
-        KMP_CPU_SET_ITERATE(i, global_mask) {
-          if (KMP_CPU_ISSET(i, task_mask)) {
-            KMP_CPU_CLR(i, global_mask);
-          }
-        }
-        __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-        
-        KMP_DEBUG_ASSERT(thread->th.th_set_nproc == 0 || thread->th.th_set_nproc == threads_data[tid].td.td_moldable_team_sizes[team_i]);
-        
-        if (__kmp_moldable_time_method == 0) {
-          end_time = __kmp_hardware_timestamp();
-          cost = (end_time - start_time) * threads_data[tid].td.td_moldable_team_sizes[team_i];
-        }
-        KMP_DEBUG_ASSERT(current_task_stats != NULL);
-        KMP_DEBUG_ASSERT(cost >= 0);
-        kmp_uint64 before = current_task_stats->ts.ts_cost[tid];
-        current_task_stats->ts.ts_cost[tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
-        KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[tid], before, cost));
-
-        // restore this threads affinity
-        thread->th.th_affin_mask = old_affin_mask;
-        __kmp_set_system_affinity(thread->th.th_affin_mask, true);
-
+        __kmp_execute_moldable_task(team_i, gtid, thread, task, threads_data);
       } else
 #endif
         __kmp_invoke_task(gtid, task, current_task);
