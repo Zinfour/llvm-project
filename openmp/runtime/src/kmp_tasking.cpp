@@ -629,7 +629,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
 
     int thread_k = -1;
     int team_k = -1;
-    kmp_int64 best_cost;
+    kmp_int64 best_cost = INT64_MAX;
     kmp_uint64 real_cost;
     for (int l = 0; l < task_team->tt.tt_moldable_teams_n; l++) {
       int thread_i = l % task_team->tt.tt_nproc;
