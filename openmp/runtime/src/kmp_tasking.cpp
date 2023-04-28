@@ -336,7 +336,7 @@ static void __kmp_realloc_task_deque(kmp_info_t *thread,
 }
 
 #if KMP_MOLDABILITY
-// __kmp_realloc_task_deque:
+// __kmp_moldable_realloc_task_deque:
 // Re-allocates a task deque for a particular thread, copies the content from
 // the old deque and adjusts the necessary data structures relating to the
 // deque. This operation must be done with the deque_lock being held
@@ -3220,33 +3220,39 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
               thread_data->td.td_moldable_deque_heads[team_i], thread_data->td.td_moldable_deque_tails[team_i]));
     return NULL;
   }
-  kmp_affin_mask_t *task_mask = thread_data->td.td_moldable_team_affin_masks[team_i];
-  kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
   int i;
-  KMP_CPU_SET_ITERATE(i, task_mask) {
-    if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
-      __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
-      KA_TRACE(10,
-              ("__kmp_remove_my_moldable_task(exit #3): T#%d moldable task not removed, would cause oversubscription: "
-                "ntasks=%d head=%u tail=%u\n",
-                gtid, thread_data->td.td_moldable_deque_ntaskss[team_i],
-                thread_data->td.td_moldable_deque_heads[team_i], thread_data->td.td_moldable_deque_tails[team_i]));
-      return NULL;
+  kmp_affin_mask_t *task_mask;
+  kmp_affin_mask_t *global_mask;
+  if (__kmp_moldable_oversubscription_method == 1) {
+    kmp_affin_mask_t *task_mask = thread_data->td.td_moldable_team_affin_masks[team_i];
+    kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+    KMP_CPU_SET_ITERATE(i, task_mask) {
+      if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
+        __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
+        KA_TRACE(10,
+                ("__kmp_remove_my_moldable_task(exit #3): T#%d moldable task not removed, would cause oversubscription: "
+                  "ntasks=%d head=%u tail=%u\n",
+                  gtid, thread_data->td.td_moldable_deque_ntaskss[team_i],
+                  thread_data->td.td_moldable_deque_heads[team_i], thread_data->td.td_moldable_deque_tails[team_i]));
+        return NULL;
+      }
     }
   }
 
-  __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+  if (__kmp_moldable_oversubscription_method == 1) {
+    __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
 
-  KMP_CPU_SET_ITERATE(i, task_mask) {
-    if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
-      __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-      __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
-      KA_TRACE(10,
-              ("__kmp_remove_my_moldable_task(exit #4): T#%d moldable task not removed, would cause oversubscription: "
-                "ntasks=%d head=%u tail=%u\n",
-                gtid, thread_data->td.td_moldable_deque_ntaskss[team_i],
-                thread_data->td.td_moldable_deque_heads[team_i], thread_data->td.td_moldable_deque_tails[team_i]));
-      return NULL;
+    KMP_CPU_SET_ITERATE(i, task_mask) {
+      if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
+        __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+        __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
+        KA_TRACE(10,
+                ("__kmp_remove_my_moldable_task(exit #4): T#%d moldable task not removed, would cause oversubscription: "
+                  "ntasks=%d head=%u tail=%u\n",
+                  gtid, thread_data->td.td_moldable_deque_ntaskss[team_i],
+                  thread_data->td.td_moldable_deque_heads[team_i], thread_data->td.td_moldable_deque_tails[team_i]));
+        return NULL;
+      }
     }
   }
 
@@ -3257,7 +3263,9 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   if (!__kmp_task_is_allowed(gtid, is_constrained, taskdata,
                              thread->th.th_current_task)) {
     // The TSC does not allow to steal victim task
-    __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+    if (__kmp_moldable_oversubscription_method == 1) {
+      __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+    }
     __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
     KA_TRACE(10,
              ("__kmp_remove_my_moldable_task(exit #5): T#%d TSC blocks tail task: "
@@ -3270,9 +3278,10 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   thread_data->td.td_moldable_deque_tails[team_i] = tail;
   TCW_4(thread_data->td.td_moldable_deque_ntaskss[team_i], thread_data->td.td_moldable_deque_ntaskss[team_i] - 1);
   
-  KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
-
-  __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+  if (__kmp_moldable_oversubscription_method == 1) {
+    KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
+    __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+  }
   __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
 
   KA_TRACE(10, ("__kmp_remove_my_moldable_task(exit #6): T#%d task %p removed: "
@@ -3446,16 +3455,18 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   kmp_uint64 cost = 0;
   __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
 
-  __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-  kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
-  kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
-  int i;
-  KMP_CPU_SET_ITERATE(i, global_mask) {
-    if (KMP_CPU_ISSET(i, task_mask)) {
-      KMP_CPU_CLR(i, global_mask);
+  if (__kmp_moldable_oversubscription_method == 1) {
+    __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+    kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
+    kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+    int i;
+    KMP_CPU_SET_ITERATE(i, global_mask) {
+      if (KMP_CPU_ISSET(i, task_mask)) {
+        KMP_CPU_CLR(i, global_mask);
+      }
     }
+    __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
   }
-  __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
   
   KMP_DEBUG_ASSERT(thread->th.th_set_nproc == 0 || thread->th.th_set_nproc == threads_data[tid].td.td_moldable_team_sizes[team_i]);
   
