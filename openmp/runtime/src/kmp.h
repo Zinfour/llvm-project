@@ -2688,6 +2688,8 @@ typedef struct kmp_base_task_team {
 #if KMP_MOLDABILITY
   int tt_moldable_teams_n;
   kmp_bootstrap_lock_t tt_moldable_teams_affinity_lock;
+
+  // Mask of occupied processors
   kmp_affin_mask_t* tt_moldable_teams_affinity_mask;
 #endif
 } kmp_base_task_team_t;

@@ -3180,7 +3180,8 @@ static kmp_task_t *__kmp_remove_my_task(kmp_info_t *thread, kmp_int32 gtid,
   return task;
 }
 #if KMP_MOLDABILITY
-// __kmp_remove_my_task: remove a task from my own deque
+// __kmp_remove_my_moldable_task: remove a moldable task from the deque of a
+// moldable team which I'm the master thread of
 static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 gtid,
                                         kmp_task_team_t *task_team,
                                         kmp_int32 is_constrained, int team_i) {
@@ -4043,9 +4044,10 @@ static int id_to_mask_i(int *ids) {
         }
       }
 
-      if (same)
+      if (same) {
         KMP_CPU_FREE(mask);
         return i;
+      }
     }
 
     KMP_CPU_FREE(mask);
@@ -4214,9 +4216,9 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 
       bool new_team = true;
 
+      int thread_i;
+      int team_i;
       for(;;) {
-        int thread_i;
-        int team_i;
         if (new_team) {
           i++;
 
