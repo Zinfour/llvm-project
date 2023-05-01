@@ -565,7 +565,9 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
   thread_data = &task_team->tt.tt_threads_data[tid];
 #if KMP_MOLDABILITY
   if (taskdata->td_moldable) {
-
+    
+    // We first find the current tasks stats by
+    // searching the linked list `__kmp_task_stats_list`
     bool done = false;
     kmp_task_stats_t *curr_task_stats = __kmp_task_stats_list;
     while (curr_task_stats != NULL) {
@@ -574,8 +576,10 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
         done = true;
         break;
       }
-      curr_task_stats = curr_task_stats->ts.ts_previous;
+      curr_task_stats = curr_task_stats->ts.ts_next;
     }
+
+    // If we didn't find the tasks stats in the list, we have to add it
     if (!done) {
       
       __kmp_acquire_bootstrap_lock(&__kmp_task_stats_lock);
@@ -588,35 +592,43 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
           done = true;
           break;
         }
-        curr_task_stats = curr_task_stats->ts.ts_previous;
+        curr_task_stats = curr_task_stats->ts.ts_next;
       }
 
       if (!done) {
         kmp_task_stats_t *new_task_stats = (kmp_task_stats_t *) __kmp_allocate(sizeof(kmp_task_stats_t));
         new_task_stats->ts.ts_routine = task->routine;
         new_task_stats->ts.ts_ident = taskdata->td_ident;
-        new_task_stats->ts.ts_previous = __kmp_task_stats_list;
+        new_task_stats->ts.ts_next = __kmp_task_stats_list;
         new_task_stats->ts.ts_cost = (kmp_uint64 *) __kmp_allocate(sizeof(kmp_uint64) * task_team->tt.tt_moldable_teams_n);
 
         taskdata->td_task_stats = new_task_stats;
         __kmp_task_stats_list = new_task_stats;
 
         KA_TRACE(1, ("__kmp_push_task: T#%d added new task_stats; stats_length=%d, cost_length=%d, previous=%p, new=%p, psource=%s\n",
-                      gtid, len + 1, task_team->tt.tt_nproc, new_task_stats->ts.ts_previous, new_task_stats, taskdata->td_ident->psource));
+                      gtid, len + 1, task_team->tt.tt_nproc, new_task_stats->ts.ts_next, new_task_stats, taskdata->td_ident->psource));
       }
       __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
     }
 
+    // We iterate through every team and find the estimated work of its threads
+    // TODO: Our current scheduling method is pretty bad, we probably don't
+    // want to iterate over every thread for every team. We don't even use
+    // `max_work` and `min_work` is just adds a constant to every cost, so it
+    // doesn't matter either.
     kmp_uint64 min_work = UINT64_MAX;
     kmp_uint64 max_work = 0;
     for (int l = 0; l < task_team->tt.tt_moldable_teams_n; l++) {
       int thread_i = l % task_team->tt.tt_nproc;
       int team_i = l / task_team->tt.tt_nproc;
       kmp_uint64 l_work = 0;
+      kmp_affin_mask_t *mask = task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i];
       int i;
-      KMP_CPU_SET_ITERATE(i, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i]) {
-        if (KMP_CPU_ISSET(i, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i])) {
-          l_work += task_team->tt.tt_threads_data[i].td.td_moldable_estimated_work/task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i];
+      KMP_CPU_SET_ITERATE(i, mask) {
+        if (KMP_CPU_ISSET(i, mask)) {
+          kmp_int64 estimated_work = task_team->tt.tt_threads_data[i].td.td_moldable_estimated_work;
+          kmp_int32 team_size = task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i];
+          l_work += estimated_work / team_size;
         }
       }
       if (l_work < min_work) {
@@ -627,6 +639,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
       }
     }
 
+    // We find the moldable team with the least cost
     int thread_k = -1;
     int team_k = -1;
     kmp_int64 best_cost = INT64_MAX;
@@ -638,10 +651,13 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
         continue;
       }
       kmp_uint64 l_work = 0;
+      kmp_affin_mask_t *mask = task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i];
       int i;
-      KMP_CPU_SET_ITERATE(i, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i]) {
-        if (KMP_CPU_ISSET(i, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i])) {
-          l_work += task_team->tt.tt_threads_data[i].td.td_moldable_estimated_work/task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i];
+      KMP_CPU_SET_ITERATE(i, mask) {
+        if (KMP_CPU_ISSET(i, mask)) {
+          kmp_int64 estimated_work = task_team->tt.tt_threads_data[i].td.td_moldable_estimated_work;
+          kmp_int32 team_size = task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i];
+          l_work += estimated_work / team_size;
         }
       }
       kmp_int64 over_min = (kmp_int64) l_work - (kmp_int64) min_work;
@@ -656,7 +672,10 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
 
     KMP_DEBUG_ASSERT(thread_k != -1);
     KMP_DEBUG_ASSERT(team_k != -1);
+
+    // If we know the cost of a task, we propagate that cost to the threads estimated work.
     if (real_cost != 0) {
+      kmp_int32 team_size = task_team->tt.tt_threads_data[thread_k].td.td_moldable_team_sizes[team_k];
       int i;
 #if KMP_DEBUG
       int count = 0;
@@ -667,10 +686,11 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
 #if KMP_DEBUG
           count += 1;
 #endif
-          task_team->tt.tt_threads_data[i].td.td_moldable_estimated_work += real_cost/task_team->tt.tt_threads_data[thread_k].td.td_moldable_team_sizes[team_k];
+          // We act as if every thread in a team performs roughly an equal amount of work
+          task_team->tt.tt_threads_data[i].td.td_moldable_estimated_work += real_cost / team_size;
         }
       }
-      KMP_DEBUG_ASSERT(count == task_team->tt.tt_threads_data[thread_k].td.td_moldable_team_sizes[team_k]);
+      KMP_DEBUG_ASSERT(count == team_size);
     }
 
 #ifdef KMP_DEBUG
@@ -4485,7 +4505,7 @@ void __kmp_free_task_team(kmp_info_t *thread, kmp_task_team_t *task_team) {
   if (task_team->tt.tt_moldable_teams_n > 0) {
     __kmp_acquire_bootstrap_lock(&__kmp_stdio_lock);
     while ((task_stats = __kmp_task_stats_list) != NULL) {
-      __kmp_task_stats_list = task_stats->ts.ts_previous;
+      __kmp_task_stats_list = task_stats->ts.ts_next;
       __kmp_printf_no_lock("Task %p ", task_stats->ts.ts_routine);
       if (task_stats->ts.ts_ident->psource != NULL) {
         __kmp_printf_no_lock("%s", task_stats->ts.ts_ident->psource);

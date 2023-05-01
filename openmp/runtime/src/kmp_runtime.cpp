@@ -6426,8 +6426,8 @@ static void __kmp_internal_end(void) {
       
       while ((task_stats = __kmp_task_stats_list) != NULL) {
 
-        __kmp_task_stats_list = task_stats->ts.ts_previous;
-        task_stats->ts.ts_previous = NULL;
+        __kmp_task_stats_list = task_stats->ts.ts_next;
+        task_stats->ts.ts_next = NULL;
         // Free threads_data if necessary
         if (task_stats->ts.ts_cost != NULL) {
           __kmp_free(task_stats->ts.ts_cost);

@@ -3044,9 +3044,11 @@ union KMP_ALIGN_CACHE kmp_team {
 typedef struct KMP_ALIGN_CACHE kmp_base_task_stats {
   kmp_routine_entry_t ts_routine;
   ident_t *ts_ident;
-  kmp_uint64 *ts_cost; // these are not atomics for now even
-    // though the costs are updated from multiple threads
-  kmp_task_stats *ts_previous;
+
+  // One cost for every moldable team. They don't need to be atomics as only
+  // the master thread of each team updates its own value.
+  kmp_uint64 *ts_cost;
+  kmp_task_stats *ts_next;
 } kmp_base_task_stats_t;
 
 union KMP_ALIGN_CACHE kmp_task_stats {
