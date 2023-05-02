@@ -3049,6 +3049,7 @@ typedef struct KMP_ALIGN_CACHE kmp_base_task_stats {
   // the master thread of each team updates its own value.
   kmp_uint64 *ts_cost;
   kmp_task_stats *ts_next;
+  kmp_uint64 ts_count;
 } kmp_base_task_stats_t;
 
 union KMP_ALIGN_CACHE kmp_task_stats {

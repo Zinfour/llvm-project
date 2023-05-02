@@ -610,6 +610,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
       }
       __kmp_release_bootstrap_lock(&__kmp_task_stats_lock);
     }
+    taskdata->td_task_stats->ts.ts_count += 1;
 
     // We iterate through every team and find the estimated work of its threads
     // TODO: Our current scheduling method is pretty bad, we probably don't
@@ -3718,13 +3719,19 @@ static inline int __kmp_execute_tasks_template(
       }
 #endif /* USE_ITT_BUILD && USE_ITT_NOTIFY */
 
-#if KMP_MOLDABILITY
       kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+      kmp_routine_entry_t tr = task->routine;
+      const char *name = taskdata->td_ident->psource;
+      kmp_uint64 start = __kmp_hardware_timestamp();
+#if KMP_MOLDABILITY
+
       if (taskdata->td_moldable) {
         __kmp_execute_moldable_task(team_i, gtid, thread, task, threads_data, current_task);
       } else
 #endif
-        __kmp_invoke_task(gtid, task, current_task);
+      __kmp_invoke_task(gtid, task, current_task);
+      KA_TRACE(1, ("taskdebug, %d, %llu, %llu, %p, %s\n", gtid, start, __kmp_hardware_timestamp(), tr, name));
+
 
 #if USE_ITT_BUILD
       if (itt_sync_obj != NULL)
@@ -4508,8 +4515,9 @@ void __kmp_free_task_team(kmp_info_t *thread, kmp_task_team_t *task_team) {
       __kmp_task_stats_list = task_stats->ts.ts_next;
       __kmp_printf_no_lock("Task %p ", task_stats->ts.ts_routine);
       if (task_stats->ts.ts_ident->psource != NULL) {
-        __kmp_printf_no_lock("%s", task_stats->ts.ts_ident->psource);
+        __kmp_printf_no_lock(", %s", task_stats->ts.ts_ident->psource);
       }
+      __kmp_printf_no_lock(", executed %llu times", task_stats->ts.ts_count);
       for (int i = 0; i < task_team->tt.tt_moldable_teams_n; i++) {
         __kmp_printf_no_lock(", %llu", task_stats->ts.ts_cost[i]);
       }
