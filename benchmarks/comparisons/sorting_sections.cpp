@@ -1,0 +1,147 @@
+// Simple program to compare different implementations
+// Example:
+// clang++ sorting_sections.cpp -fopenmp -Wall -Wextra -O2 -g -o main && OMP_MAX_ACTIVE_LEVELS=2 KMP_TOPOLOGY_METHOD=hwloc KMP_MOLDABLE_LEVELS=2 ./main
+#include <algorithm>
+#include <iostream>
+#include <random>
+#include <cassert>
+#include <chrono>
+#include <omp.h>
+
+
+const int SECTIONS = 100;
+const int SECTION_SIZE = 10000;
+const int SIZE = SECTIONS * SECTION_SIZE;
+const int ITERATIONS = 100;
+
+enum Loop {
+    Serial,
+    Parallel,
+    SplitParallel,
+};
+
+void a(Loop loop) {
+    // First we create the list 0...SIZE
+    int* list = (int*) malloc(SIZE * sizeof(int));
+    for (int i = 0; i < SIZE; i++) {
+        list[i] = i;
+    }
+
+    // Then we shuffle it
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(list, list+SIZE, g);
+
+    // Then we sort each section individually
+    switch (loop) {
+        case Serial:
+            for (int i = 0; i < SECTIONS; i++) {
+                int* beg = list + SECTION_SIZE*i;
+                int* end = list + SECTION_SIZE*(i+1);
+                std::sort(beg, end);
+            }
+            break;
+        case Parallel:
+            #pragma omp parallel for
+            for (int i = 0; i < SECTIONS; i++) {
+                int* beg = list + SECTION_SIZE*i;
+                int* end = list + SECTION_SIZE*(i+1);
+                std::sort(beg, end);
+            }
+            break;
+        case SplitParallel:
+            int p = omp_get_place_num();
+            int t = omp_get_place_num_procs(p) / 2;
+            #pragma omp parallel for num_threads(t) proc_bind(master)
+            for (int i = 0; i < SECTIONS; i++) {
+                int* beg = list + SECTION_SIZE*i;
+                int* end = list + SECTION_SIZE*(i+1);
+                std::sort(beg, end);
+            }
+            break;
+    }
+
+    // Then we assert that each section is ordered
+    for (int i = 0; i < SECTIONS; i++) {
+        for (int j = 0; j < SECTION_SIZE-1; j++) {
+            int a = list[SECTION_SIZE*i + j];
+            int b = list[SECTION_SIZE*i + j + 1];
+            assert(a < b);
+        }
+    }
+}
+
+void moldable(bool wait) {
+    #pragma omp parallel
+    #pragma omp single
+    for (int i = 0; i < ITERATIONS; i++) {
+        #pragma omp task moldable
+        a(Parallel);
+
+        #pragma omp task moldable
+        a(Parallel);
+        if (wait) {
+            #pragma omp taskwait
+        }
+    }
+}
+
+void serial_tasks(bool wait) {
+    #pragma omp parallel
+    #pragma omp single
+    for (int i = 0; i < ITERATIONS; i++) {
+        #pragma omp task
+        a(Serial);
+
+        #pragma omp task
+        a(Serial);
+        if (wait) {
+            #pragma omp taskwait
+        }
+    }
+}
+
+void manual_moldable(bool wait) {
+    #pragma omp parallel
+    #pragma omp single
+    for (int i = 0; i < ITERATIONS; i++) {
+        #pragma omp task
+        a(SplitParallel);
+
+        #pragma omp task
+        a(SplitParallel);
+        if (wait) {
+            #pragma omp taskwait
+        }
+    }
+}
+
+void serial() {
+    for (int i = 0; i < ITERATIONS; i++) {
+        a(Serial);
+        a(Serial);
+    }
+}
+
+#define TIME(f, s)                             \
+    before = std::chrono::system_clock::now(); \
+    f;                                         \
+    after = std::chrono::system_clock::now();  \
+    std::cout << s << (after - before) / 1ms << "ms" << std::endl
+
+int main() {
+    using namespace std::literals;
+
+    std::chrono::time_point<std::chrono::system_clock> before;
+    std::chrono::time_point<std::chrono::system_clock> after;
+
+
+    TIME(moldable(false),        "Moldable               : ");
+    TIME(serial_tasks(false),    "Serial Tasks           : ");
+    TIME(manual_moldable(false), "Manual Moldable        : ");
+    TIME(moldable(true),         "Moldable        (wait) : ");
+    TIME(serial_tasks(true),     "Serial Tasks    (wait) : ");
+    TIME(manual_moldable(true),  "Manual Moldable (wait) : ");
+    TIME(serial(),               "Serial                 : ");
+    return 0;
+}
