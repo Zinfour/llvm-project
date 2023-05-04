@@ -3496,6 +3496,139 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
 }
 
 #if KMP_MOLDABILITY
+
+// __kmp_steal_moldable_task: remove a task from another thread's deque
+// Assume that calling thread has already checked existence of
+// task_team thread_data before calling this routine.
+static kmp_task_t *__kmp_steal_moldable_task(kmp_info_t *victim_thr, kmp_int32 gtid,
+                                    kmp_task_team_t *task_team,
+                                    std::atomic<kmp_int32> *unfinished_threads,
+                                    int *thread_finished,
+                                    kmp_int32 is_constrained,
+                                    int team_i) {
+  kmp_task_t *task;
+  kmp_taskdata_t *taskdata;
+  kmp_taskdata_t *current;
+  kmp_thread_data_t *victim_td, *threads_data;
+  kmp_int32 target;
+  kmp_int32 victim_tid;
+
+  KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
+
+  threads_data = task_team->tt.tt_threads_data;
+  KMP_DEBUG_ASSERT(threads_data != NULL); // Caller should check this condition
+
+  victim_tid = victim_thr->th.th_info.ds.ds_tid;
+  victim_td = &threads_data[victim_tid];
+
+  KA_TRACE(10, ("__kmp_steal_moldable_task(enter): T#%d try to steal from T#%d: "
+                "task_team=%p ntasks=%d head=%u tail=%u\n",
+                gtid, __kmp_gtid_from_thread(victim_thr), task_team,
+                victim_td->td.td_moldable_deque_ntaskss[team_i], victim_td->td.td_moldable_deque_heads[team_i],
+                victim_td->td.td_moldable_deque_tails[team_i]));
+
+  if (TCR_4(victim_td->td.td_moldable_deque_ntaskss[team_i]) == 0) {
+    KA_TRACE(10, ("__kmp_steal_moldable_task(exit #1): T#%d could not steal from T#%d: "
+                  "task_team=%p ntasks=%d head=%u tail=%u\n",
+                  gtid, __kmp_gtid_from_thread(victim_thr), task_team,
+                  victim_td->td.td_moldable_deque_ntaskss[team_i], victim_td->td.td_moldable_deque_heads[team_i],
+                  victim_td->td.td_moldable_deque_tails[team_i]));
+    return NULL;
+  }
+
+  __kmp_acquire_bootstrap_lock(&victim_td->td.td_moldable_deque_locks[team_i]);
+
+  int ntasks = TCR_4(victim_td->td.td_moldable_deque_ntaskss[team_i]);
+  // Check again after we acquire the lock
+  if (ntasks == 0) {
+    __kmp_release_bootstrap_lock(&victim_td->td.td_moldable_deque_locks[team_i]);
+    KA_TRACE(10, ("__kmp_steal_moldable_task(exit #2): T#%d could not steal from T#%d: "
+                  "task_team=%p ntasks=%d head=%u tail=%u\n",
+                  gtid, __kmp_gtid_from_thread(victim_thr), task_team, ntasks,
+                  victim_td->td.td_moldable_deque_heads[team_i], victim_td->td.td_moldable_deque_tails[team_i]));
+    return NULL;
+  }
+
+  KMP_DEBUG_ASSERT(victim_td->td.td_moldable_deques[team_i] != NULL);
+  current = __kmp_threads[gtid]->th.th_current_task;
+  taskdata = victim_td->td.td_moldable_deques[team_i][victim_td->td.td_moldable_deque_heads[team_i]];
+  if (__kmp_task_is_allowed(gtid, is_constrained, taskdata, current)) {
+    // Bump head pointer and Wrap.
+    victim_td->td.td_moldable_deque_heads[team_i] =
+        (victim_td->td.td_moldable_deque_heads[team_i] + 1) & TASK_MOLDABLE_DEQUE_MASK(victim_td->td, team_i);
+  } else {
+    if (!task_team->tt.tt_untied_task_encountered) {
+      // The TSC does not allow to steal victim task
+      __kmp_release_bootstrap_lock(&victim_td->td.td_moldable_deque_locks[team_i]);
+      KA_TRACE(10, ("__kmp_steal_moldable_task(exit #3): T#%d could not steal from "
+                    "T#%d: task_team=%p ntasks=%d head=%u tail=%u\n",
+                    gtid, __kmp_gtid_from_thread(victim_thr), task_team, ntasks,
+                    victim_td->td.td_moldable_deque_heads[team_i], victim_td->td.td_moldable_deque_tails[team_i]));
+      return NULL;
+    }
+    int i;
+    // walk through victim's deque trying to steal any task
+    target = victim_td->td.td_moldable_deque_heads[team_i];
+    taskdata = NULL;
+    for (i = 1; i < ntasks; ++i) {
+      target = (target + 1) & TASK_MOLDABLE_DEQUE_MASK(victim_td->td, team_i);
+      taskdata = victim_td->td.td_moldable_deques[team_i][target];
+      if (__kmp_task_is_allowed(gtid, is_constrained, taskdata, current)) {
+        break; // found victim task
+      } else {
+        taskdata = NULL;
+      }
+    }
+    if (taskdata == NULL) {
+      // No appropriate candidate to steal found
+      __kmp_release_bootstrap_lock(&victim_td->td.td_moldable_deque_locks[team_i]);
+      KA_TRACE(10, ("__kmp_steal_moldable_task(exit #4): T#%d could not steal from "
+                    "T#%d: task_team=%p ntasks=%d head=%u tail=%u\n",
+                    gtid, __kmp_gtid_from_thread(victim_thr), task_team, ntasks,
+                    victim_td->td.td_moldable_deque_heads[team_i], victim_td->td.td_moldable_deque_tails[team_i]));
+      return NULL;
+    }
+    int prev = target;
+    for (i = i + 1; i < ntasks; ++i) {
+      // shift remaining tasks in the deque left by 1
+      target = (target + 1) & TASK_DEQUE_MASK(victim_td->td);
+      victim_td->td.td_moldable_deques[team_i][prev] = victim_td->td.td_moldable_deques[team_i][target];
+      prev = target;
+    }
+    KMP_DEBUG_ASSERT(
+        victim_td->td.td_moldable_deque_tails[team_i] ==
+        (kmp_uint32)((target + 1) & TASK_DEQUE_MASK(victim_td->td)));
+    victim_td->td.td_moldable_deque_tails[team_i] = target; // tail -= 1 (wrapped))
+  }
+  if (*thread_finished) {
+    // We need to un-mark this victim as a finished victim.  This must be done
+    // before releasing the lock, or else other threads (starting with the
+    // primary thread victim) might be prematurely released from the barrier!!!
+#if KMP_DEBUG
+    kmp_int32 count =
+#endif
+        KMP_ATOMIC_INC(unfinished_threads);
+    KA_TRACE(
+        20,
+        ("__kmp_steal_moldable_task: T#%d inc unfinished_threads to %d: task_team=%p\n",
+         gtid, count + 1, task_team));
+    *thread_finished = FALSE;
+  }
+  TCW_4(victim_td->td.td_moldable_deque_ntaskss[team_i], ntasks - 1);
+
+  __kmp_release_bootstrap_lock(&victim_td->td.td_moldable_deque_locks[team_i]);
+
+  KMP_COUNT_BLOCK(TASK_stolen);
+  KA_TRACE(10,
+           ("__kmp_steal_moldable_task(exit #5): T#%d stole task %p from T#%d: "
+            "task_team=%p ntasks=%d head=%u tail=%u\n",
+            gtid, taskdata, __kmp_gtid_from_thread(victim_thr), task_team,
+            ntasks, victim_td->td.td_moldable_deque_heads[team_i], victim_td->td.td_moldable_deque_tails[team_i]));
+
+  task = KMP_TASKDATA_TO_TASK(taskdata);
+  return task;
+}
+
 static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *thread,
                                         kmp_task_t *task, kmp_thread_data_t *threads_data,
                                         kmp_taskdata_t *current_task) {
@@ -3690,6 +3823,25 @@ static inline int __kmp_execute_tasks_template(
           task = __kmp_steal_task(other_thread, gtid, task_team,
                                   unfinished_threads, thread_finished,
                                   is_constrained);
+
+          if (__kmp_moldable_work_stealing && task == NULL) {
+            for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
+              task = __kmp_steal_moldable_task(other_thread, gtid, task_team,
+                                      unfinished_threads, thread_finished,
+                                      is_constrained, i);
+              if (task != NULL) {
+                for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
+                  if (threads_data[tid].td.td_moldable_deques[MAX_TEAMS_PER_THREAD - 1 - i] != NULL) {
+                    team_i = MAX_TEAMS_PER_THREAD - 1 - i;
+                    break;
+                  }
+                }
+                KMP_DEBUG_ASSERT(team_i != -1);
+                KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] == 1);
+                break;
+              }
+            }
+          }
         }
         if (task != NULL) { // set last stolen to victim
           if (threads_data[tid].td.td_deque_last_stolen != victim_tid) {
@@ -3763,7 +3915,7 @@ static inline int __kmp_execute_tasks_template(
         }
         if (TCR_4(threads_data[tid].td.td_moldable_deque_ntaskss[i]) != 0) {
           ntasks_left = true;
-        break;
+          break;
         }
       }
 #endif
