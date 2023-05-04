@@ -4478,9 +4478,11 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
             __kmp_alloc_moldable_task_deque(team->t.t_threads[thread_i], thread_data, team_i);
           }
           KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0);
-          KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == 0);
-          KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_tails[team_i] == 0);
-          KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_masks[team_i]);
+          KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == thread_data->td.td_moldable_deque_tails[team_i]);
+
+          if (thread_data->td.td_moldable_team_affin_masks[team_i] == NULL) {
+            KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_masks[team_i]);
+          }
           KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_masks[team_i]);
           thread_data->td.td_moldable_team_sizes[team_i] = 0;
 
