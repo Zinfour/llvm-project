@@ -69,6 +69,7 @@ void a(Loop loop) {
             assert(a < b);
         }
     }
+    free(list);
 }
 
 void moldable(bool wait) {
