@@ -2612,6 +2612,8 @@ typedef struct kmp_base_thread_data {
   // GEH: shouldn't this be volatile since used in while-spin?
   kmp_int32 td_deque_last_stolen; // Thread number of last successful steal
 #if KMP_MOLDABILITY
+  kmp_int32 td_deque_last_stolen_team; // team number of last successful steal
+  
   kmp_bootstrap_lock_t td_moldable_deque_locks[MAX_TEAMS_PER_THREAD]; // Lock for accessing deque
   kmp_taskdata_t **td_moldable_deques[MAX_TEAMS_PER_THREAD]; // Deque of tasks encountered by td_thr, dynamically allocated
   kmp_int32 td_moldable_deque_sizes[MAX_TEAMS_PER_THREAD]; // Size of deck
@@ -2623,6 +2625,9 @@ typedef struct kmp_base_thread_data {
   kmp_int64 td_moldable_estimated_work; // estimated work in total assigned to thread.
   kmp_int32 td_moldable_team_sizes[MAX_TEAMS_PER_THREAD];
   kmp_affin_mask_t *td_moldable_team_affin_masks[MAX_TEAMS_PER_THREAD];
+
+  kmp_int32 *td_steal_order;
+  kmp_int32 td_deque_steal_list_id; // team number of last successful steal
 #endif
 #ifdef BUILD_TIED_TASK_STACK
   kmp_task_stack_t td_susp_tied_tasks; // Stack of suspended tied tasks for task
