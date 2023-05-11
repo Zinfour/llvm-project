@@ -2051,13 +2051,28 @@ static void __kmp_get_time_helper(int *gtid, int *npr, std::atomic<kmp_uint64> *
   KMP_ATOMIC_ADD_RLX(cost, r_usage.ru_utime.tv_sec * 1000000 + r_usage.ru_utime.tv_usec + r_usage.ru_stime.tv_sec * 1000000 + r_usage.ru_stime.tv_usec);
 }
 
-static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task, kmp_uint64 *cost) {
+static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task, kmp_affin_mask_t *mask, kmp_affin_mask_t *new_mask, kmp_uint64 *cost) {
   std::atomic<kmp_uint64> times_before = 0;
-  
   if (__kmp_moldable_time_method == 1) {
     __kmpc_fork_call(KMP_TASK_TO_TASKDATA(task)->td_ident, 1, VOLATILE_CAST(microtask_t) __kmp_get_time_helper, &times_before);
   }
+
+  // set this threads affinity
+  KMP_DEBUG_ASSERT(mask != NULL);
+  KMP_DEBUG_ASSERT(new_mask != NULL);
+  kmp_affin_mask_t *old_affin_mask;
+  KMP_CPU_ALLOC(old_affin_mask);
+  KMP_CPU_COPY(old_affin_mask, mask);
+  KMP_CPU_COPY(mask, new_mask);
+  int res = __kmp_set_system_affinity(mask, true);
+  KMP_DEBUG_ASSERT(res == 0);
+
   (*(((kmp_task_t *) task)->routine))(*gtid, task);
+
+  // restore this threads affinity
+  KMP_CPU_COPY(mask, old_affin_mask);
+  res = __kmp_set_system_affinity(mask, true);
+  KMP_DEBUG_ASSERT(res == 0);
 
   std::atomic<kmp_uint64> times_after = 0;
   if (__kmp_moldable_time_method == 1) {
@@ -3591,13 +3606,13 @@ static kmp_task_t *__kmp_steal_moldable_task(kmp_info_t *victim_thr, kmp_int32 g
     int prev = target;
     for (i = i + 1; i < ntasks; ++i) {
       // shift remaining tasks in the deque left by 1
-      target = (target + 1) & TASK_DEQUE_MASK(victim_td->td);
+      target = (target + 1) & TASK_MOLDABLE_DEQUE_MASK(victim_td->td, team_i);
       victim_td->td.td_moldable_deques[team_i][prev] = victim_td->td.td_moldable_deques[team_i][target];
       prev = target;
     }
     KMP_DEBUG_ASSERT(
         victim_td->td.td_moldable_deque_tails[team_i] ==
-        (kmp_uint32)((target + 1) & TASK_DEQUE_MASK(victim_td->td)));
+        (kmp_uint32)((target + 1) & TASK_MOLDABLE_DEQUE_MASK(victim_td->td, team_i)));
     victim_td->td.td_moldable_deque_tails[team_i] = target; // tail -= 1 (wrapped))
   }
   if (*thread_finished) {
@@ -3647,9 +3662,6 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   
   __kmp_task_start(gtid, task, current_task);
   // set this threads affinity
-  kmp_affin_mask_t *old_affin_mask = thread->th.th_affin_mask;
-  thread->th.th_affin_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
-  __kmp_set_system_affinity(thread->th.th_affin_mask, true);
   thread->th.th_set_affin_mask = thread->th.th_affin_mask;
 
   kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
@@ -3660,7 +3672,7 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
 
   __kmp_push_num_teams(taskdata->td_ident, gtid, 1, threads_data[tid].td.td_moldable_team_sizes[team_i]);
   kmp_uint64 cost = 0;
-  __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
+  __kmpc_fork_teams(taskdata->td_ident, 4, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, thread->th.th_affin_mask, threads_data[tid].td.td_moldable_team_affin_masks[team_i], &cost);
 
   if (__kmp_moldable_oversubscription_method == 1) {
     __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
@@ -3688,9 +3700,7 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
   KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid], before, cost));
 
-  // restore this threads affinity
-  thread->th.th_affin_mask = old_affin_mask;
-  __kmp_set_system_affinity(thread->th.th_affin_mask, true);
+  thread->th.th_set_affin_mask = NULL;
   __kmp_task_finish<false>(gtid, task, current_task);
 }
 #endif
@@ -3840,7 +3850,9 @@ static inline int __kmp_execute_tasks_template(
             task = __kmp_steal_task(other_thread, gtid, task_team,
                                     unfinished_threads, thread_finished,
                                     is_constrained);
-
+            if (task != NULL) {
+              team_i = -1;
+            }
             if (__kmp_moldable_work_stealing && task == NULL) {
               for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
                 task = __kmp_steal_moldable_task(other_thread, gtid, task_team,
@@ -4613,6 +4625,23 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
     KMP_MB();
     TCW_SYNC_4(task_team->tt.tt_found_tasks, TRUE);
   }
+
+
+#if KMP_DEBUG
+  for (int l = 0; l < task_team->tt.tt_moldable_teams_n; l++) {
+    int thread_i = l % task_team->tt.tt_nproc;
+    int team_i = l / task_team->tt.tt_nproc;
+
+    int count = 0;
+    int ii;
+    KMP_CPU_SET_ITERATE(ii, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i]) {
+      if (KMP_CPU_ISSET(ii, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i])) {
+        count += 1;
+      }
+    }
+    KMP_DEBUG_ASSERT(count == task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i])
+  }
+#endif
 
   __kmp_release_bootstrap_lock(&task_team->tt.tt_threads_lock);
   return is_init_thread;
