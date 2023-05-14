@@ -2071,6 +2071,7 @@ static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task, kmp_affin_
 
   // restore this threads affinity
   KMP_CPU_COPY(mask, old_affin_mask);
+  KMP_CPU_FREE(old_affin_mask);
   res = __kmp_set_system_affinity(mask, true);
   KMP_DEBUG_ASSERT(res == 0);
 
