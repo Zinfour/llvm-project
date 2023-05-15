@@ -3387,20 +3387,19 @@ static kmp_task_t *__kmp_steal_task(kmp_info_t *victim_thr, kmp_int32 gtid,
                                     kmp_task_team_t *task_team,
                                     std::atomic<kmp_int32> *unfinished_threads,
                                     int *thread_finished,
-                                    kmp_int32 is_constrained) {
+                                    kmp_int32 is_constrained, int victim_tid) {
   kmp_task_t *task;
   kmp_taskdata_t *taskdata;
   kmp_taskdata_t *current;
   kmp_thread_data_t *victim_td, *threads_data;
   kmp_int32 target;
-  kmp_int32 victim_tid;
 
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
 
   threads_data = task_team->tt.tt_threads_data;
   KMP_DEBUG_ASSERT(threads_data != NULL); // Caller should check this condition
 
-  victim_tid = victim_thr->th.th_info.ds.ds_tid;
+  // victim_tid = victim_thr->th.th_info.ds.ds_tid;  we can't rely on this tid if this thread is executing a moldable task.
   victim_td = &threads_data[victim_tid];
 
   KA_TRACE(10, ("__kmp_steal_task(enter): T#%d try to steal from T#%d: "
@@ -3521,20 +3520,19 @@ static kmp_task_t *__kmp_steal_moldable_task(kmp_info_t *victim_thr, kmp_int32 g
                                     std::atomic<kmp_int32> *unfinished_threads,
                                     int *thread_finished,
                                     kmp_int32 is_constrained,
-                                    int team_i) {
+                                    int team_i, int victim_tid) {
   kmp_task_t *task;
   kmp_taskdata_t *taskdata;
   kmp_taskdata_t *current;
   kmp_thread_data_t *victim_td, *threads_data;
   kmp_int32 target;
-  kmp_int32 victim_tid;
 
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
 
   threads_data = task_team->tt.tt_threads_data;
   KMP_DEBUG_ASSERT(threads_data != NULL); // Caller should check this condition
 
-  victim_tid = victim_thr->th.th_info.ds.ds_tid;
+  // victim_tid = victim_thr->th.th_info.ds.ds_tid;  we can't rely on this tid if this thread is executing a moldable task.
   victim_td = &threads_data[victim_tid];
 
   KA_TRACE(10, ("__kmp_steal_moldable_task(enter): T#%d try to steal from T#%d: "
@@ -3663,7 +3661,8 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   
   __kmp_task_start(gtid, task, current_task);
   // set this threads affinity
-  thread->th.th_set_affin_mask = thread->th.th_affin_mask;
+  KMP_CPU_ALLOC(thread->th.th_set_affin_mask);
+  KMP_CPU_COPY(thread->th.th_set_affin_mask, thread->th.th_affin_mask);
 
   kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
 
@@ -3701,6 +3700,7 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
   KA_TRACE(1, ("%d: executing moldable task took: %llu, ~cost: %llu\n", tid, cost, current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid], before, cost));
 
+  KMP_CPU_FREE(thread->th.th_set_affin_mask);
   thread->th.th_set_affin_mask = NULL;
   __kmp_task_finish<false>(gtid, task, current_task);
 }
@@ -3848,7 +3848,7 @@ static inline int __kmp_execute_tasks_template(
             // If we stole from a moldable team before we'll do it again...
             task = __kmp_steal_moldable_task(other_thread, gtid, task_team,
                                              unfinished_threads, thread_finished,
-                                             is_constrained, victim_team);
+                                             is_constrained, victim_team, victim_tid);
             if (task != NULL) {
               team_i = victim_team;
             }
@@ -3856,7 +3856,7 @@ static inline int __kmp_execute_tasks_template(
             // ... if not we'll just steal normal tasks
             task = __kmp_steal_task(other_thread, gtid, task_team,
                                     unfinished_threads, thread_finished,
-                                    is_constrained);
+                                    is_constrained, victim_tid);
             if (task != NULL) {
               team_i = -1;
             } else if (__kmp_moldable_work_stealing) {
@@ -3865,7 +3865,7 @@ static inline int __kmp_execute_tasks_template(
               for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
                 task = __kmp_steal_moldable_task(other_thread, gtid, task_team,
                                         unfinished_threads, thread_finished,
-                                        is_constrained, i);
+                                        is_constrained, i, victim_tid);
                 if (task != NULL) {
                   // We will execute our moldable task on the team at the end
                   // of td_moldable_deques, which should be the smallest one.
