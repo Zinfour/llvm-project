@@ -8,11 +8,17 @@
 #include <chrono>
 #include <omp.h>
 
+#ifndef SECTIONS
+#define SECTIONS 100
+#endif
+#ifndef SECTION_SIZE
+#define SECTION_SIZE 10000
+#endif
+#ifndef ITERATIONS
+#define ITERATIONS 100
+#endif
 
-const int SECTIONS = 100;
-const int SECTION_SIZE = 10000;
 const int SIZE = SECTIONS * SECTION_SIZE;
-const int ITERATIONS = 100;
 
 enum Loop {
     Serial,
@@ -135,7 +141,9 @@ int main() {
 
     std::chrono::time_point<std::chrono::system_clock> before;
     std::chrono::time_point<std::chrono::system_clock> after;
-
+    std::cout << "SECTIONS     : " << SECTIONS << std::endl;
+    std::cout << "SECTION_SIZE : " << SECTION_SIZE << std::endl;
+    std::cout << "ITERATIONS   : " << ITERATIONS << std::endl;
 
     TIME(moldable(false),        "Moldable               : ");
     TIME(serial_tasks(false),    "Serial Tasks           : ");
