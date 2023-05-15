@@ -2612,10 +2612,13 @@ typedef struct kmp_base_thread_data {
   // GEH: shouldn't this be volatile since used in while-spin?
   kmp_int32 td_deque_last_stolen; // Thread number of last successful steal
 #if KMP_MOLDABILITY
+  // Thread number of last successful (moldable) steal
+  kmp_int32 td_deque_last_stolen_m;
+
   // Number in [0, MAX_TEAMS_PER_THREAD) of which deque of td_deque_last_stolen
   // we last stole a moldable task from.
   kmp_int32 td_deque_last_stolen_mteam;
-  
+
   kmp_bootstrap_lock_t td_moldable_deque_locks[MAX_TEAMS_PER_THREAD]; // Lock for accessing deque
   kmp_taskdata_t **td_moldable_deques[MAX_TEAMS_PER_THREAD]; // Deque of tasks encountered by td_thr, dynamically allocated
   kmp_int32 td_moldable_deque_sizes[MAX_TEAMS_PER_THREAD]; // Size of deck
@@ -2853,6 +2856,7 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint32 th_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
 #if KMP_MOLDABILITY
+  // The mask of a master thread for a moldable team, which worker threads should copy.
   kmp_affin_mask_t *th_set_affin_mask;
 #endif
   /* More stuff for keeping track of active/sleeping threads (this part is
