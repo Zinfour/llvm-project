@@ -2594,6 +2594,7 @@ void __kmp_fork_barrier(int gtid, int tid) {
     }
   }
 #if KMP_MOLDABILITY
+  // change the affinity if set_affin_mask is in preparion for a moldable task
   if (this_thr->th.th_set_affin_mask != NULL) {
     KMP_CPU_COPY(this_thr->th.th_affin_mask, this_thr->th.th_set_affin_mask);
 
