@@ -371,6 +371,8 @@ static kmp_task_pri_t *__kmp_alloc_task_pri_list() {
   kmp_thread_data_t *thread_data = &l->td;
   __kmp_init_bootstrap_lock(&thread_data->td.td_deque_lock);
   thread_data->td.td_deque_last_stolen = -1;
+  thread_data->td.td_deque_last_stolen_m = -1;
+  thread_data->td.td_deque_last_stolen_mteam = -1;
   KE_TRACE(20, ("__kmp_alloc_task_pri_list: T#%d allocating deque[%d] "
                 "for thread_data %p\n",
                 __kmp_get_gtid(), INITIAL_TASK_DEQUE_SIZE, thread_data));
@@ -3722,7 +3724,10 @@ static inline int __kmp_execute_tasks_template(
   int team_i;
   kmp_int32 victim_tid_m = -2;
   kmp_info_t *other_thread_m;
-  kmp_int32 victim_team = -1;
+
+  // Will be larger or equal to 0 when we're stealing moldable tasks
+  kmp_int32 victim_mteam = -2;
+  kmp_int32 new_victim_m = 0;
 #endif
   kmp_taskdata_t *current_task = thread->th.th_current_task;
   std::atomic<kmp_int32> *unfinished_threads;
@@ -3777,6 +3782,7 @@ static inline int __kmp_execute_tasks_template(
         }
       }
 #endif
+
       if ((task == NULL) && (nthreads > 1)) { // Steal a task finally
         int asleep = 1;
         use_own_tasks = 0;
@@ -3784,7 +3790,10 @@ static inline int __kmp_execute_tasks_template(
         if (victim_tid == -2) { // haven't stolen anything yet
           victim_tid = threads_data[tid].td.td_deque_last_stolen;
           victim_tid_m = threads_data[tid].td.td_deque_last_stolen_m;
-          victim_team = threads_data[tid].td.td_deque_last_stolen_mteam;
+          victim_mteam = threads_data[tid].td.td_deque_last_stolen_mteam;
+          if (!__kmp_moldable_work_stealing) {
+            KMP_DEBUG_ASSERT(victim_tid_m == -1);
+          }
 
           // if we have a last stolen from victim, get the thread
           if (victim_tid != -1) {
@@ -3794,19 +3803,11 @@ static inline int __kmp_execute_tasks_template(
             other_thread_m = threads_data[victim_tid_m].td.td_thr;
           }
         }
-        if (victim_tid != -1 || victim_team != -1) { // found last victim
+        if (victim_tid != -1) { // found last victim
           asleep = 0;
         } else if (!new_victim) { // no recent steals and we haven't already
           // used a new victim; select a random thread
           do { // Find a different thread to steal work from.
-
-            // If we're stealing from moldable teams we'll use the given "steal order"
-            KMP_DEBUG_ASSERT(threads_data[tid].td.td_steal_order != NULL);
-            kmp_int32 *id = &threads_data[tid].td.td_deque_steal_list_id;
-            victim_tid_m = threads_data[tid].td.td_steal_order[*id];
-            other_thread_m = threads_data[victim_tid_m].td.td_thr;
-            *id = (*id + 1) % (nthreads - 1);
-
             // Pick a random thread. Initial plan was to cycle through all the
             // threads, and only return if we tried to steal from every thread,
             // and failed.  Arch says that's not such a great idea.
@@ -3814,7 +3815,6 @@ static inline int __kmp_execute_tasks_template(
             if (victim_tid >= tid) {
               ++victim_tid; // Adjusts random distribution to exclude self
             }
-
             // Found a potential victim
             other_thread = threads_data[victim_tid].td.td_thr;
             // There is a slight chance that __kmp_enable_tasking() did not wake
@@ -3827,18 +3827,11 @@ static inline int __kmp_execute_tasks_template(
             // barrier, so this isn't a problem.
             asleep = 0;
             if ((__kmp_tasking_mode == tskm_task_teams) &&
-                (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME)) {
-              if ((TCR_PTR(CCAST(void *, other_thread->th.th_sleep_loc)) !=
+                (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) &&
+                (TCR_PTR(CCAST(void *, other_thread->th.th_sleep_loc)) !=
                  NULL)) {
-                asleep = 1;
-                __kmp_null_resume_wrapper(other_thread);
-              }
-              // Do the same for moldable tasks
-              if ((TCR_PTR(CCAST(void *, other_thread_m->th.th_sleep_loc)) !=
-                 NULL)) {
-                asleep = 1;
-                __kmp_null_resume_wrapper(other_thread_m);
-              }
+              asleep = 1;
+              __kmp_null_resume_wrapper(other_thread);
               // A sleeping thread should not have any tasks on it's queue.
               // There is a slight possibility that it resumes, steals a task
               // from another thread, which spawns more tasks, all in the time
@@ -3848,17 +3841,46 @@ static inline int __kmp_execute_tasks_template(
             }
           } while (asleep);
         }
+        // We need a victim for moldable tasks too, so do the same thing but for "*_m"
+        if (victim_tid_m != -1) {
+          asleep = 0;
+        } else if (!new_victim_m) { // no recent steals and we haven't already
+          // used a new victim;
+          do { // Find a different thread to steal work from.
+
+            // If we're stealing from moldable teams we'll use the given "steal order"
+            KMP_DEBUG_ASSERT(threads_data[tid].td.td_steal_order != NULL);
+            kmp_int32 *id = &threads_data[tid].td.td_deque_steal_list_id;
+            victim_tid_m = threads_data[tid].td.td_steal_order[*id];
+            other_thread_m = threads_data[victim_tid_m].td.td_thr;
+            *id = (*id + 1) % (nthreads - 1);
+
+            asleep = 0;
+            if ((__kmp_tasking_mode == tskm_task_teams) &&
+                (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) &&
+                (TCR_PTR(CCAST(void *, other_thread_m->th.th_sleep_loc)) !=
+                 NULL)) {
+              asleep = 1;
+              __kmp_null_resume_wrapper(other_thread_m);
+            }
+          } while (asleep);
+        }
+
+
+        bool moldable_task = false;
 
         if (!asleep) {
           // We have a victim to try to steal from
 
-          if (victim_team != -1) {
+          if (victim_mteam != -1) {
+            KMP_DEBUG_ASSERT(__kmp_moldable_work_stealing);
             // If we stole from a moldable team before we'll do it again...
             task = __kmp_steal_moldable_task(other_thread_m, gtid, task_team,
                                              unfinished_threads, thread_finished,
-                                             is_constrained, victim_team, victim_tid_m);
+                                             is_constrained, victim_mteam, victim_tid_m);
             if (task != NULL) {
-              team_i = victim_team;
+              team_i = victim_mteam;
+              moldable_task = true;
             }
           } else {
             // ... if not we'll just steal normal tasks
@@ -3868,6 +3890,7 @@ static inline int __kmp_execute_tasks_template(
             if (task != NULL) {
               team_i = -1;
             } else if (__kmp_moldable_work_stealing) {
+              KMP_DEBUG_ASSERT(victim_tid_m != -1);
               // We didn't have any normal task to steal so we'll start
               // stealing moldable tasks by looking through the deques of other_thread.
               for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
@@ -3882,10 +3905,11 @@ static inline int __kmp_execute_tasks_template(
                   for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
                     if (threads_data[tid].td.td_moldable_deques[MAX_TEAMS_PER_THREAD - 1 - i] != NULL) {
                       team_i = MAX_TEAMS_PER_THREAD - 1 - i;
-                      victim_team = team_i;
+                      victim_mteam = team_i;
                       break;
                     }
                   }
+                  moldable_task = true;
                   KMP_DEBUG_ASSERT(team_i != -1);
                   KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] == 1);
                   break;
@@ -3895,16 +3919,34 @@ static inline int __kmp_execute_tasks_template(
           }
         }
         if (task != NULL) { // set last stolen to victim
-          if (threads_data[tid].td.td_deque_last_stolen != victim_tid || threads_data[tid].td.td_deque_last_stolen_mteam != victim_team) {
-            threads_data[tid].td.td_deque_last_stolen = victim_tid;
-            threads_data[tid].td.td_deque_last_stolen_m = victim_tid_m;
-            threads_data[tid].td.td_deque_last_stolen_mteam = victim_team;
+          bool changed = false;
+          if (moldable_task) {
+            if (threads_data[tid].td.td_deque_last_stolen_mteam != victim_mteam) {
+              threads_data[tid].td.td_deque_last_stolen_mteam = victim_mteam;
+              changed = true;
+            }
+            if (threads_data[tid].td.td_deque_last_stolen_m != victim_tid_m) {
+              threads_data[tid].td.td_deque_last_stolen_m = victim_tid_m;
+              changed = true;
+            }
+            KMP_DEBUG_ASSERT(victim_mteam == team_i);
+          } else {
+            if (threads_data[tid].td.td_deque_last_stolen != victim_tid) {
+              threads_data[tid].td.td_deque_last_stolen = victim_tid;
+              changed = true;
+            }
+          }
+
+          if (changed) {
             // The pre-refactored code did not try more than 1 successful new
             // vicitm, unless the last one generated more local tasks;
             // new_victim keeps track of this
-            new_victim = 1;
+            if (moldable_task) {
+              new_victim_m = 1;
+            } else {
+              new_victim = 1;
+            }
             threads_data[tid].td.td_deque_steal_list_id = 0;
-            KMP_DEBUG_ASSERT(victim_team == team_i)
           }
         } else { // No tasks found; unset last_stolen
           KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen, -1);
@@ -3914,7 +3956,7 @@ static inline int __kmp_execute_tasks_template(
           // no successful victim found
           victim_tid = -2;
           victim_tid_m = -2;
-          victim_team = -1;
+          victim_mteam = -2;
         }
       }
 
@@ -3990,6 +4032,7 @@ static inline int __kmp_execute_tasks_template(
                       gtid));
         use_own_tasks = 1;
         new_victim = 0;
+        new_victim_m = 0;
       }
     }
 
@@ -4239,6 +4282,10 @@ static void __kmp_alloc_task_deque(kmp_info_t *thread,
 
   // Initialize last stolen task field to "none"
   thread_data->td.td_deque_last_stolen = -1;
+
+  // Initialize last stolen task field to "none"
+  thread_data->td.td_deque_last_stolen_m = -1;
+  thread_data->td.td_deque_last_stolen_mteam = -1;
 
   KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_deque_ntasks) == 0);
   KMP_DEBUG_ASSERT(thread_data->td.td_deque_head == 0);
@@ -4544,6 +4591,9 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
         // parallel region will exhibit the same behavior as previous region.
         thread_data->td.td_deque_last_stolen = -1;
       }
+
+      thread_data->td.td_deque_last_stolen_m = -1;
+      thread_data->td.td_deque_last_stolen_mteam = -1;
     }
 #if KMP_MOLDABILITY
     KMP_DEBUG_ASSERT(__kmp_topology);

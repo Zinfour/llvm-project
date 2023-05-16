@@ -2616,7 +2616,7 @@ typedef struct kmp_base_thread_data {
   kmp_int32 td_deque_last_stolen_m;
 
   // Number in [0, MAX_TEAMS_PER_THREAD) of which deque of td_deque_last_stolen
-  // we last stole a moldable task from.
+  // we last stole a moldable task from or -1 if we haven't stolen anything
   kmp_int32 td_deque_last_stolen_mteam;
 
   kmp_bootstrap_lock_t td_moldable_deque_locks[MAX_TEAMS_PER_THREAD]; // Lock for accessing deque
