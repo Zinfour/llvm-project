@@ -2594,13 +2594,8 @@ void __kmp_fork_barrier(int gtid, int tid) {
     }
   }
 #if KMP_MOLDABILITY
-  if (this_thr->th.th_set_affin_mask) {
-    
+  if (this_thr->th.th_set_affin_mask != NULL) {
     KMP_CPU_COPY(this_thr->th.th_affin_mask, this_thr->th.th_set_affin_mask);
-    // this_thr->th.th_current_place = this_thr->th.th_new_place;
-    // Copy topology information associated with the place
-    // this_thr->th.th_topology_ids = __kmp_affinity.ids[this_thr->th.th_new_place];
-    // this_thr->th.th_topology_attrs = __kmp_affinity.attrs[this_thr->th.th_new_place];
 
     if (__kmp_affinity.flags.verbose) {
       char buf[KMP_AFFIN_MASK_PRINT_LEN];
@@ -2608,6 +2603,7 @@ void __kmp_fork_barrier(int gtid, int tid) {
                                 this_thr->th.th_affin_mask);
     }
     __kmp_set_system_affinity(this_thr->th.th_affin_mask, TRUE);
+    KMP_CPU_FREE(this_thr->th.th_set_affin_mask);
     this_thr->th.th_set_affin_mask = NULL;
   }
 #endif // KMP_MOLDABILITY
