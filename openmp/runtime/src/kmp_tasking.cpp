@@ -4360,26 +4360,54 @@ static int id_to_mask_i(int *ids) {
 }
 #endif
 
+// Iterate over every thread in `task_team` and create its `td_steal_order`, which is used for moldable work stealing.
+// `thread` is only used for sampling random numbers
 static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thread) {
-    for (int t = 0; t < task_team->tt.tt_nproc; t++) {
-    if (task_team->tt.tt_threads_data[t].td.td_steal_order != NULL) {
-      __kmp_free(task_team->tt.tt_threads_data[t].td.td_steal_order);
+  for (int t = 0; t < task_team->tt.tt_nproc; t++) {
+
+    kmp_thread_data_t *thread_data = &task_team->tt.tt_threads_data[t];
+
+    // Remove old steal_order
+    if (thread_data->td.td_steal_order != NULL) {
+      __kmp_free(thread_data->td.td_steal_order);
     }
-    kmp_thread_data_t * thread_data = &task_team->tt.tt_threads_data[t];
-    thread_data->td.td_steal_order = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * task_team->tt.tt_nproc);
+
+    // Our steal order will contain every other thread
+    kmp_int32 other_threads = task_team->tt.tt_nproc - 1;
+
+    thread_data->td.td_steal_order = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
+
+
+    // Number of encountered threads
     int last = 0;
+
+    // We iterate through moldable teams backwards so we start with the smallest teams first,
+    // as small teams which include `t` will be "closer" to `t`.
     for (int l = task_team->tt.tt_moldable_teams_n-1; l >= 0; l--) {
       int thread_i = l % task_team->tt.tt_nproc;
       int team_i = l / task_team->tt.tt_nproc;
-      if (KMP_CPU_ISSET(t, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i])) {
+      kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[thread_i];
+      kmp_affin_mask_t *mask = thread_data_2->td.td_moldable_team_affin_masks[team_i];
+
+      // We only look at teams which include t. We will look at all threads as
+      // long as t shares some team with every other thread, for example when
+      // there is a team which contains all threads.
+      if (KMP_CPU_ISSET(t, mask)) {
         int t2;
-        // we keep the new numbers in a seperate list so that we can randomize it.
-        kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * task_team->tt.tt_nproc);
+        // We keep the new numbers in a seperate list so that we can randomize it.
+        kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
         int tmp_list_len = 0;
-        KMP_CPU_SET_ITERATE(t2, task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_affin_masks[team_i]) {
+        KMP_CPU_SET_ITERATE(t2, mask) {
+
+          // CPU_SET_ITERATE should only return set bits.
+          KMP_DEBUG_ASSERT(KMP_CPU_ISSET(t2, mask));
+
+          // We won't steal from ourselves
           if (t2 == t) {
             continue;
           }
+
+          // We skip any thread which is part of `l` if we've seen it before
           bool duplicate = false;
           for (int t3 = 0; t3 < last; t3++) {
             if (thread_data->td.td_steal_order[t3] == t2) {
@@ -4390,14 +4418,21 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
           if (!duplicate) {
             tmp_list[tmp_list_len] = t2;
             tmp_list_len++;
+            KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
           }
         }
+
+        // Shuffle tmp_list, version of Fisher-Yates
         for (int i = 0; i < tmp_list_len-1; ++i) {
           int j = __kmp_get_random(thread) % (tmp_list_len-i) + i;
-          int temp = tmp_list[i];
+          KMP_DEBUG_ASSERT(j < tmp_list_len);
+          KMP_DEBUG_ASSERT(i <= j);
+
+          kmp_int32 temp = tmp_list[i];
           tmp_list[i] = tmp_list[j];
           tmp_list[j] = temp;
         }
+
         for (int i = 0; i < tmp_list_len; ++i) {
             KA_TRACE(1, ("%d, ", tmp_list[i]));
             thread_data->td.td_steal_order[last] = tmp_list[i];
@@ -4406,7 +4441,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
         __kmp_free(tmp_list);
       }
     }
-    KMP_DEBUG_ASSERT(last == task_team->tt.tt_nproc - 1);
+    KMP_DEBUG_ASSERT(last == other_threads);
     KA_TRACE(1, ("\n"));
   }
 }
