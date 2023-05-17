@@ -53,7 +53,7 @@ gnt.set_yticklabels(list(map(lambda x: str(x[0]), groups)))
 # gnt.grid(True)
 colors = list(mcolors.TABLEAU_COLORS.values())
 mapping = {}
-for x, y in zip(colors, names):
+for x, y in zip(itertools.cycle(colors), names):
     mapping[y] = x
 
 

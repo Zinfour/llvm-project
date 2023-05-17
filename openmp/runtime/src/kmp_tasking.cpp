@@ -3978,15 +3978,16 @@ static inline int __kmp_execute_tasks_template(
       kmp_routine_entry_t tr = task->routine;
       const char *name = taskdata->td_ident->psource;
       kmp_uint64 start = __kmp_hardware_timestamp();
+      int extra_id = 0;
 #if KMP_MOLDABILITY
 
       if (taskdata->td_moldable) {
+        extra_id = threads_data[tid].td.td_moldable_team_sizes[team_i];
         __kmp_execute_moldable_task(team_i, gtid, thread, task, threads_data, current_task);
       } else
 #endif
       __kmp_invoke_task(gtid, task, current_task);
-      KA_TRACE(1, ("taskdebug, %d, %llu, %llu, %p, %s\n", gtid, start, __kmp_hardware_timestamp(), tr, name));
-
+      KA_TRACE(1, ("taskdebug, %d, %llu, %llu, %p, %s%d\n", gtid, start, __kmp_hardware_timestamp(), tr, name, extra_id));
 
 #if USE_ITT_BUILD
       if (itt_sync_obj != NULL)
