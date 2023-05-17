@@ -3684,7 +3684,8 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   kmp_uint64 before = current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid];
   current_task_stats->ts.ts_cost[task_team->tt.tt_nproc * team_i + tid] = before + (((kmp_int64) cost - (kmp_int64) before)/((kmp_int64) __kmp_moldable_exp_average));
   
-  __kmp_set_system_affinity(old_mask, true);
+  KMP_CPU_COPY(thread->th.th_affin_mask, old_mask);
+  __kmp_set_system_affinity(thread->th.th_affin_mask, true);
   kmp_affin_mask_t *current_mask;
   KMP_CPU_ALLOC(current_mask);
   __kmp_get_system_affinity(current_mask, true);
