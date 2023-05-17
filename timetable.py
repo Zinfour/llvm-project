@@ -48,13 +48,40 @@ gnt.set_ylabel('Gtid')
 gnt.set_yticks(list(map(lambda x: x+0.5, range(len(groups)))))
 # # Labelling tickes of y-axis
 gnt.set_yticklabels(list(map(lambda x: str(x[0]), groups)))
- 
-# Setting graph attribute
-# gnt.grid(True)
-colors = list(mcolors.TABLEAU_COLORS.values())
+
+# We will color the bar depending on 3 factors, so we map them to RGB
+funcs = set()
+lines = set()
+ends = set()
+
+for n in names:
+    _blank, _file, func, line, _col, _blanc, end = n.split(sep=";")
+    funcs.add(func)
+    lines.add(line)
+    ends.add(end)
+
+funcs = sorted(list(funcs))
+lines = sorted(list(lines))
+ends = sorted(list(ends))
+
+# Does nothine when 1
+scale_factor = 1
+def get_color(func, line, end):
+    r = funcs.index(func) / len(funcs)
+    g = lines.index(line) / len(lines)
+    b = ends.index(end)   / len(ends)
+
+    addi = 0.5 - (0.5/scale_factor)
+
+    r = (r / scale_factor) + addi
+    g = (g / scale_factor) + addi
+    b = (b / scale_factor) + addi
+    return (r, g, b, 1.0)
+
 mapping = {}
-for x, y in zip(itertools.cycle(colors), names):
-    mapping[y] = x
+for n in names:
+    _blank, _file, func, line, _col, _blanc, end = n.split(sep=";")
+    mapping[n] = get_color(func, line, end)
 
 
 for i, (gtid, group) in enumerate(groups):
