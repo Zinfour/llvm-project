@@ -3644,12 +3644,11 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   
   __kmp_task_start(gtid, task, current_task);
   // set this threads affinity
-  KMP_DEBUG_ASSERT(thread->th.th_set_affin_mask == NULL);
-  KMP_CPU_ALLOC(thread->th.th_set_affin_mask);
-  KMP_CPU_COPY(thread->th.th_set_affin_mask, threads_data[tid].td.td_moldable_team_affin_masks[team_i]);
   kmp_affin_mask_t *old_mask;
   KMP_CPU_ALLOC(old_mask);
   KMP_CPU_COPY(old_mask, thread->th.th_affin_mask);
+  KMP_CPU_COPY(thread->th.th_affin_mask, threads_data[tid].td.td_moldable_team_affin_masks[team_i]);
+  __kmp_set_system_affinity(thread->th.th_affin_mask, true);
 
   kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
 
@@ -3686,19 +3685,8 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   
   KMP_CPU_COPY(thread->th.th_affin_mask, old_mask);
   __kmp_set_system_affinity(thread->th.th_affin_mask, true);
-  kmp_affin_mask_t *current_mask;
-  KMP_CPU_ALLOC(current_mask);
-  __kmp_get_system_affinity(current_mask, true);
-  int ii;
-  KMP_CPU_SET_ITERATE(ii, current_mask) {
-    KMP_DEBUG_ASSERT(KMP_CPU_ISSET(ii, old_mask));
-  }
-  KMP_CPU_SET_ITERATE(ii, old_mask) {
-    KMP_DEBUG_ASSERT(KMP_CPU_ISSET(ii, current_mask));
-  }
   KMP_CPU_FREE(old_mask);
 
-  KMP_DEBUG_ASSERT(thread->th.th_set_affin_mask == NULL);
   __kmp_task_finish<false>(gtid, task, current_task);
 }
 #endif

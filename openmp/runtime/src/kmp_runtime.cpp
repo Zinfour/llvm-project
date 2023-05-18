@@ -1654,19 +1654,6 @@ __kmp_serial_fork_call(ident_t *loc, int gtid, enum fork_context_e call_context,
     if (!ap) {
       // revert change made in __kmpc_serialized_parallel()
       master_th->th.th_serial_team->t.t_level--;
-      // if we're executing a moldable task we need to set our system affinity
-      if (master_th->th.th_set_affin_mask != NULL) {
-        KMP_CPU_COPY(master_th->th.th_affin_mask, master_th->th.th_set_affin_mask);
-
-        if (__kmp_affinity.flags.verbose) {
-          char buf[KMP_AFFIN_MASK_PRINT_LEN];
-          __kmp_affinity_print_mask(buf, KMP_AFFIN_MASK_PRINT_LEN,
-                                    master_th->th.th_affin_mask);
-        }
-        __kmp_set_system_affinity(master_th->th.th_affin_mask, TRUE);
-        KMP_CPU_FREE(master_th->th.th_set_affin_mask);
-        master_th->th.th_set_affin_mask = NULL;
-      }
 // Get args from parent team for teams construct
 
 #if OMPT_SUPPORT
@@ -5138,25 +5125,7 @@ static void __kmp_partition_places(kmp_team_t *team, int update_master_only) {
   default:
     break;
   }
-
-#if KMP_MOLDABILITY
-  // propogate the set_affin_mask to worker threads
-  if (master_th->th.th_set_affin_mask  != NULL) {
-    for (int i = 0; i < team->t.t_nproc; i++) {
-      kmp_info_t *th = team->t.t_threads[i];
-      if (th->th.th_set_affin_mask == NULL) {
-        KMP_CPU_ALLOC(th->th.th_set_affin_mask);
-      }
-      if (th->th.th_set_affin_mask == master_th->th.th_set_affin_mask) {
-        // we don't meed to propagate set_affin_mask to ourselves.
-        continue;
-      }
-      KMP_CPU_COPY(th->th.th_set_affin_mask, master_th->th.th_set_affin_mask);
-    }
-  }
-#endif
-
-    KA_TRACE(20, ("__kmp_partition_places: exit T#%d\n", team->t.t_id));
+  KA_TRACE(20, ("__kmp_partition_places: exit T#%d\n", team->t.t_id));
 }
 
 #endif // KMP_AFFINITY_SUPPORTED

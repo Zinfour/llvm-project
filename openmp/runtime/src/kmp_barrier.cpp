@@ -2593,21 +2593,6 @@ void __kmp_fork_barrier(int gtid, int tid) {
       __kmp_affinity_set_place(gtid);
     }
   }
-#if KMP_MOLDABILITY
-  // change the affinity if set_affin_mask is in preparion for a moldable task
-  if (this_thr->th.th_set_affin_mask != NULL) {
-    KMP_CPU_COPY(this_thr->th.th_affin_mask, this_thr->th.th_set_affin_mask);
-
-    if (__kmp_affinity.flags.verbose) {
-      char buf[KMP_AFFIN_MASK_PRINT_LEN];
-      __kmp_affinity_print_mask(buf, KMP_AFFIN_MASK_PRINT_LEN,
-                                this_thr->th.th_affin_mask);
-    }
-    __kmp_set_system_affinity(this_thr->th.th_affin_mask, TRUE);
-    KMP_CPU_FREE(this_thr->th.th_set_affin_mask);
-    this_thr->th.th_set_affin_mask = NULL;
-  }
-#endif // KMP_MOLDABILITY
 #endif // KMP_AFFINITY_SUPPORTED
   // Perform the display affinity functionality
   if (__kmp_display_affinity) {

@@ -2855,10 +2855,6 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_uint32 th_task_state_stack_sz; // Size of th_task_state_memo_stack
   kmp_uint32 th_reap_state; // Non-zero indicates thread is not
   // tasking, thus safe to reap
-#if KMP_MOLDABILITY
-  // The mask of a master thread for a moldable team, which worker threads should copy.
-  kmp_affin_mask_t *th_set_affin_mask;
-#endif
   /* More stuff for keeping track of active/sleeping threads (this part is
      written by the worker thread) */
   kmp_uint8 th_active_in_pool; // included in count of #active threads in pool
