@@ -3913,6 +3913,7 @@ static inline int __kmp_execute_tasks_template(
                                         unfinished_threads, thread_finished,
                                         is_constrained, i, victim_tid_m);
                 if (task != NULL) {
+                  KA_TRACE(5, ("Stole Moldable task: %d -> %d\n", victim_tid_m, tid));
                   // We will execute our moldable task on the team at the end
                   // of td_moldable_deques, which should be the smallest one.
                   // TODO: Maybe do something smarter than just choosing the
