@@ -3744,6 +3744,12 @@ static inline int __kmp_execute_tasks_template(
                    task_team->tt.tt_hidden_helper_task_encountered);
   KMP_DEBUG_ASSERT(*unfinished_threads >= 0);
 
+
+  // We will steal moldable tasks iff it is activated and if we have a
+  // list of threads to steal from.
+  bool steal_moldable = __kmp_moldable_work_stealing
+    && (threads_data[tid].td.td_steal_order_len != 0);
+
   while (1) { // Outer loop keeps trying to find tasks in case of single thread
     // getting tasks from target constructs
     while (1) { // Inner loop to find a task and execute it
@@ -3778,19 +3784,22 @@ static inline int __kmp_execute_tasks_template(
         // Try to steal from the last place I stole from successfully.
         if (victim_tid == -2) { // haven't stolen anything yet
           victim_tid = threads_data[tid].td.td_deque_last_stolen;
+          // if we have a last stolen from victim, get the thread
+          if (victim_tid != -1) {
+            other_thread = threads_data[victim_tid].td.td_thr;
+          }
+
+          if (steal_moldable) {
           victim_tid_m = threads_data[tid].td.td_deque_last_stolen_m;
           victim_mteam = threads_data[tid].td.td_deque_last_stolen_mteam;
           if (!__kmp_moldable_work_stealing) {
             KMP_DEBUG_ASSERT(victim_tid_m == -1);
           }
 
-          // if we have a last stolen from victim, get the thread
-          if (victim_tid != -1) {
-            other_thread = threads_data[victim_tid].td.td_thr;
-          }
           if (victim_tid_m != -1) {
             other_thread_m = threads_data[victim_tid_m].td.td_thr;
           }
+        }
         }
         if (victim_tid != -1) { // found last victim
           asleep = 0;
@@ -3830,6 +3839,9 @@ static inline int __kmp_execute_tasks_template(
             }
           } while (asleep);
         }
+
+
+        if (steal_moldable) {
         // We need a victim for moldable tasks too, so do the same thing but for "*_m"
         if (victim_tid_m != -1) {
           asleep = 0;
@@ -3842,7 +3854,7 @@ static inline int __kmp_execute_tasks_template(
             kmp_int32 *id = &threads_data[tid].td.td_deque_steal_list_id;
             victim_tid_m = threads_data[tid].td.td_steal_order[*id];
             other_thread_m = threads_data[victim_tid_m].td.td_thr;
-            *id = (*id + 1) % (nthreads - 1);
+              *id = (*id + 1) % threads_data[tid].td.td_steal_order_len;
 
             asleep = 0;
             if ((__kmp_tasking_mode == tskm_task_teams) &&
@@ -3854,6 +3866,7 @@ static inline int __kmp_execute_tasks_template(
             }
           } while (asleep);
         }
+        }
 
 
         bool moldable_task = false;
@@ -3861,7 +3874,7 @@ static inline int __kmp_execute_tasks_template(
         if (!asleep) {
           // We have a victim to try to steal from
 
-          if (victim_mteam != -1) {
+          if (steal_moldable && victim_mteam != -1) {
             KMP_DEBUG_ASSERT(__kmp_moldable_work_stealing);
             // If we stole from a moldable team before we'll do it again...
             task = __kmp_steal_moldable_task(other_thread_m, gtid, task_team,
@@ -3878,7 +3891,7 @@ static inline int __kmp_execute_tasks_template(
                                     is_constrained, victim_tid);
             if (task != NULL) {
               team_i = -1;
-            } else if (__kmp_moldable_work_stealing) {
+            } else if (steal_moldable) {
               KMP_DEBUG_ASSERT(victim_tid_m != -1);
               // We didn't have any normal task to steal so we'll start
               // stealing moldable tasks by looking through the deques of other_thread.
@@ -3939,13 +3952,16 @@ static inline int __kmp_execute_tasks_template(
           }
         } else { // No tasks found; unset last_stolen
           KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen, -1);
+          // no successful victim found
+          victim_tid = -2;
+
+          if (steal_moldable) {
           KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen_m, -1);
           KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen_mteam, -1);
 
-          // no successful victim found
-          victim_tid = -2;
           victim_tid_m = -2;
           victim_mteam = -2;
+          }
         }
       }
 
@@ -4409,6 +4425,22 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
       __kmp_free(thread_data->td.td_steal_order);
     }
 
+    // First check if we even have any team to run the task on after we steal it
+    bool found = false;
+    if (thread_data->td.td_moldable_team_sizes != NULL) {
+      for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
+        if (thread_data->td.td_moldable_team_sizes[i] != 0) {
+          found = true;
+          break;
+        }
+      }
+    }
+    if (!found) {
+      thread_data->td.td_steal_order_len = 0;
+      continue;
+    }
+    KA_TRACE(0, ("WTFFFF1 : %d\n", task_team->tt.tt_moldable_teams_n));
+
     // Our steal order will contain every other thread
     kmp_int32 other_threads = task_team->tt.tt_nproc - 1;
 
@@ -4426,10 +4458,11 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
       kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[thread_i];
       kmp_affin_mask_t *mask = thread_data_2->td.td_moldable_team_affin_masks[team_i];
 
-      // We only look at teams which include t. We will look at all threads as
-      // long as t shares some team with every other thread, for example when
-      // there is a team which contains all threads.
-      if (KMP_CPU_ISSET(t, mask)) {
+      // We'll ignore our own team as we don't want to steal from ourselves.
+      if (thread_i == t) {
+        continue;
+      }
+
         int t2;
         // We keep the new numbers in a seperate list so that we can randomize it.
         kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
@@ -4447,13 +4480,19 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
           // We skip any thread which is part of `l` if we've seen it before
           bool duplicate = false;
           for (int t3 = 0; t3 < last; t3++) {
-            if (thread_data->td.td_steal_order[t3] == t2) {
+          if (thread_data->td.td_steal_order[t3] == thread_i) {
+            duplicate = true;
+            break;
+          }
+        }
+        for (int t3 = 0; t3 < tmp_list_len; t3++) {
+          if (tmp_list[t3] == thread_i) {
               duplicate = true;
               break;
             }
           }
           if (!duplicate) {
-            tmp_list[tmp_list_len] = t2;
+          tmp_list[tmp_list_len] = thread_i;
             tmp_list_len++;
             KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
           }
@@ -4477,8 +4516,8 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
         }
         __kmp_free(tmp_list);
       }
-    }
-    KMP_DEBUG_ASSERT(last == other_threads);
+    thread_data->td.td_steal_order_len = last;
+    KMP_DEBUG_ASSERT(last <= other_threads);
     KA_TRACE(1, ("\n"));
   }
 }

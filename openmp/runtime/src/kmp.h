@@ -2632,6 +2632,7 @@ typedef struct kmp_base_thread_data {
   kmp_affin_mask_t *td_moldable_team_affin_masks[MAX_TEAMS_PER_THREAD];
 
   kmp_int32 *td_steal_order;
+  kmp_int32 td_steal_order_len;
 
   // Index into td_steal_order of current thread we're trying to steal from tasks from
   kmp_int32 td_deque_steal_list_id;
