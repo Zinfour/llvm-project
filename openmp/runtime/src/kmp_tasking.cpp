@@ -3803,16 +3803,16 @@ static inline int __kmp_execute_tasks_template(
           }
 
           if (steal_moldable) {
-          victim_tid_m = threads_data[tid].td.td_deque_last_stolen_m;
-          victim_mteam = threads_data[tid].td.td_deque_last_stolen_mteam;
-          if (!__kmp_moldable_work_stealing) {
-            KMP_DEBUG_ASSERT(victim_tid_m == -1);
-          }
+            victim_tid_m = threads_data[tid].td.td_deque_last_stolen_m;
+            victim_mteam = threads_data[tid].td.td_deque_last_stolen_mteam;
+            if (!__kmp_moldable_work_stealing) {
+              KMP_DEBUG_ASSERT(victim_tid_m == -1);
+            }
 
-          if (victim_tid_m != -1) {
-            other_thread_m = threads_data[victim_tid_m].td.td_thr;
+            if (victim_tid_m != -1) {
+              other_thread_m = threads_data[victim_tid_m].td.td_thr;
+            }
           }
-        }
         }
         if (victim_tid != -1) { // found last victim
           asleep = 0;
@@ -3855,30 +3855,30 @@ static inline int __kmp_execute_tasks_template(
 
 
         if (steal_moldable) {
-        // We need a victim for moldable tasks too, so do the same thing but for "*_m"
-        if (victim_tid_m != -1) {
-          asleep = 0;
-        } else if (!new_victim_m) { // no recent steals and we haven't already
-          // used a new victim;
-          do { // Find a different thread to steal work from.
+          // We need a victim for moldable tasks too, so do the same thing but for "*_m"
+          if (victim_tid_m != -1) {
+            asleep = 0;
+          } else if (!new_victim_m) { // no recent steals and we haven't already
+            // used a new victim;
+            do { // Find a different thread to steal work from.
 
-            // If we're stealing from moldable teams we'll use the given "steal order"
-            KMP_DEBUG_ASSERT(threads_data[tid].td.td_steal_order != NULL);
-            kmp_int32 *id = &threads_data[tid].td.td_deque_steal_list_id;
-            victim_tid_m = threads_data[tid].td.td_steal_order[*id];
-            other_thread_m = threads_data[victim_tid_m].td.td_thr;
+              // If we're stealing from moldable teams we'll use the given "steal order"
+              KMP_DEBUG_ASSERT(threads_data[tid].td.td_steal_order != NULL);
+              kmp_int32 *id = &threads_data[tid].td.td_deque_steal_list_id;
+              victim_tid_m = threads_data[tid].td.td_steal_order[*id];
+              other_thread_m = threads_data[victim_tid_m].td.td_thr;
               *id = (*id + 1) % threads_data[tid].td.td_steal_order_len;
 
-            asleep = 0;
-            if ((__kmp_tasking_mode == tskm_task_teams) &&
-                (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) &&
-                (TCR_PTR(CCAST(void *, other_thread_m->th.th_sleep_loc)) !=
-                 NULL)) {
-              asleep = 1;
-              __kmp_null_resume_wrapper(other_thread_m);
-            }
-          } while (asleep);
-        }
+              asleep = 0;
+              if ((__kmp_tasking_mode == tskm_task_teams) &&
+                  (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) &&
+                  (TCR_PTR(CCAST(void *, other_thread_m->th.th_sleep_loc)) !=
+                  NULL)) {
+                asleep = 1;
+                __kmp_null_resume_wrapper(other_thread_m);
+              }
+            } while (asleep);
+          }
         }
 
 
@@ -3970,11 +3970,11 @@ static inline int __kmp_execute_tasks_template(
           victim_tid = -2;
 
           if (steal_moldable) {
-          KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen_m, -1);
-          KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen_mteam, -1);
+            KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen_m, -1);
+            KMP_CHECK_UPDATE(threads_data[tid].td.td_deque_last_stolen_mteam, -1);
 
-          victim_tid_m = -2;
-          victim_mteam = -2;
+            victim_tid_m = -2;
+            victim_mteam = -2;
           }
         }
       }
@@ -4476,23 +4476,23 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
         continue;
       }
 
-        int t2;
-        // We keep the new numbers in a seperate list so that we can randomize it.
-        kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
-        int tmp_list_len = 0;
-        KMP_CPU_SET_ITERATE(t2, mask) {
+      int t2;
+      // We keep the new numbers in a seperate list so that we can randomize it.
+      kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
+      int tmp_list_len = 0;
+      KMP_CPU_SET_ITERATE(t2, mask) {
 
-          // CPU_SET_ITERATE should only return set bits.
-          KMP_DEBUG_ASSERT(KMP_CPU_ISSET(t2, mask));
+        // CPU_SET_ITERATE should only return set bits.
+        KMP_DEBUG_ASSERT(KMP_CPU_ISSET(t2, mask));
 
-          // We won't steal from ourselves
-          if (t2 == t) {
-            continue;
-          }
+        // We won't steal from ourselves
+        if (t2 == t) {
+          continue;
+        }
 
-          // We skip any thread which is part of `l` if we've seen it before
-          bool duplicate = false;
-          for (int t3 = 0; t3 < last; t3++) {
+        // We skip any thread which is part of `l` if we've seen it before
+        bool duplicate = false;
+        for (int t3 = 0; t3 < last; t3++) {
           if (thread_data->td.td_steal_order[t3] == thread_i) {
             duplicate = true;
             break;
@@ -4500,35 +4500,35 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
         }
         for (int t3 = 0; t3 < tmp_list_len; t3++) {
           if (tmp_list[t3] == thread_i) {
-              duplicate = true;
-              break;
-            }
+            duplicate = true;
+            break;
           }
-          if (!duplicate) {
+        }
+        if (!duplicate) {
           tmp_list[tmp_list_len] = thread_i;
-            tmp_list_len++;
-            KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
-          }
+          tmp_list_len++;
+          KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
         }
-
-        // Shuffle tmp_list, version of Fisher-Yates
-        for (int i = 0; i < tmp_list_len-1; ++i) {
-          int j = __kmp_get_random(thread) % (tmp_list_len-i) + i;
-          KMP_DEBUG_ASSERT(j < tmp_list_len);
-          KMP_DEBUG_ASSERT(i <= j);
-
-          kmp_int32 temp = tmp_list[i];
-          tmp_list[i] = tmp_list[j];
-          tmp_list[j] = temp;
-        }
-
-        for (int i = 0; i < tmp_list_len; ++i) {
-            KA_TRACE(1, ("%d, ", tmp_list[i]));
-            thread_data->td.td_steal_order[last] = tmp_list[i];
-            last++;
-        }
-        __kmp_free(tmp_list);
       }
+
+      // Shuffle tmp_list, version of Fisher-Yates
+      for (int i = 0; i < tmp_list_len-1; ++i) {
+        int j = __kmp_get_random(thread) % (tmp_list_len-i) + i;
+        KMP_DEBUG_ASSERT(j < tmp_list_len);
+        KMP_DEBUG_ASSERT(i <= j);
+
+        kmp_int32 temp = tmp_list[i];
+        tmp_list[i] = tmp_list[j];
+        tmp_list[j] = temp;
+      }
+
+      for (int i = 0; i < tmp_list_len; ++i) {
+          KA_TRACE(1, ("%d, ", tmp_list[i]));
+          thread_data->td.td_steal_order[last] = tmp_list[i];
+          last++;
+      }
+      __kmp_free(tmp_list);
+    }
     thread_data->td.td_steal_order_len = last;
     KMP_DEBUG_ASSERT(last <= other_threads);
     KA_TRACE(1, ("\n"));
@@ -4698,40 +4698,26 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       kmp_thread_data_t *thread_data;
 
       bool new_team = true;
-
-      int thread_i;
       int team_i;
+      int team_size;
+      int master_thread;
       for(;;) {
         if (new_team) {
           i++;
 
-          // Allocate data needed for moldable team
-          thread_i = i % nthreads;
-          team_i = i / nthreads;
-          KMP_DEBUG_ASSERT(thread_i < nthreads);
-          KMP_DEBUG_ASSERT(team_i < MAX_TEAMS_PER_THREAD);
-          thread_data = &(*threads_data_p)[thread_i];
-          thread_data->td.td_thr = team->t.t_threads[thread_i];
-
-          if (UNLIKELY(thread_data->td.td_moldable_deques[team_i] == NULL)) {
-            __kmp_alloc_moldable_task_deque(team->t.t_threads[thread_i], thread_data, team_i);
-          }
-          KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0);
-          KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == thread_data->td.td_moldable_deque_tails[team_i]);
-
-          if (thread_data->td.td_moldable_team_affin_masks[team_i] == NULL) {
-            KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_masks[team_i]);
-          }
-          KMP_CPU_ZERO(thread_data->td.td_moldable_team_affin_masks[team_i]);
-          thread_data->td.td_moldable_team_sizes[team_i] = 0;
-
+          master_thread = -1;
+          team_size = 0;
+          KMP_CPU_ZERO(tmp_mask);
           new_team = false;
         }
 
         int j = id_to_mask_i(cur_id);
+        if (master_thread == -1) {
+          master_thread = j;
+        }
         KMP_DEBUG_ASSERT(j != -1);
-        KMP_CPU_SET(j, thread_data->td.td_moldable_team_affin_masks[team_i]);
-        thread_data->td.td_moldable_team_sizes[team_i]++;
+        KMP_CPU_SET(j, tmp_mask);
+        team_size++;
 
         // Find next valid thread by iterating from the lowest levels upward.
         // Like iterating a mixed radix integer, where the radix is decided by max_id.
@@ -4763,10 +4749,40 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
             cur_level--;
           }
         }
+        if (done || new_team) {
+          KMP_DEBUG_ASSERT(master_thread < nthreads);
+
+          thread_data = &(*threads_data_p)[master_thread];
+          
+          team_i = -1;
+          for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
+            if (thread_data->td.td_moldable_deques[i] == NULL) {
+              team_i = i;
+              break;
+            }
+          }
+          KMP_DEBUG_ASSERT(team_i != -1);
+          KMP_DEBUG_ASSERT(team_i < MAX_TEAMS_PER_THREAD);
+          thread_data->td.td_thr = team->t.t_threads[master_thread];
+
+          if (UNLIKELY(thread_data->td.td_moldable_deques[team_i] == NULL)) {
+            __kmp_alloc_moldable_task_deque(team->t.t_threads[master_thread], thread_data, team_i);
+          }
+          KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0);
+          KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == thread_data->td.td_moldable_deque_tails[team_i]);
+
+          if (thread_data->td.td_moldable_team_affin_masks[team_i] == NULL) {
+            KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_masks[team_i]);
+          }
+          KMP_CPU_COPY(thread_data->td.td_moldable_team_affin_masks[team_i], tmp_mask);
+          thread_data->td.td_moldable_team_sizes[team_i] = team_size;
+        }
+
         if (done)
           break;
       }
     }
+    KMP_CPU_FREE(tmp_mask);
 
     __kmp_create_steal_lists(task_team, thread);
     KA_TRACE(1, ("created %d moldable task teams\n", i+1));
