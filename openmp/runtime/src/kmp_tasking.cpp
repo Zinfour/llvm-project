@@ -621,7 +621,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
         int lr = __kmp_get_random(thread) % (task_team->tt.tt_nproc * MAX_TEAMS_PER_THREAD);
         thread_k = lr % task_team->tt.tt_nproc;
         team_k = lr / task_team->tt.tt_nproc;
-      } while (task_team->tt.tt_threads_data[thread_k].td.td_moldable_deques[team_k] == NULL);
+      } while (task_team->tt.tt_threads_data[thread_k].td.td_moldable_team_sizes[team_k] == 0);
     }
 
     if (thread_k == -1 || team_k == -1) {
@@ -635,7 +635,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
       for (int l = 0; l < task_team->tt.tt_nproc * MAX_TEAMS_PER_THREAD; l++) {
         int thread_i = l % task_team->tt.tt_nproc;
         int team_i = l / task_team->tt.tt_nproc;
-        if (task_team->tt.tt_threads_data[thread_i].td.td_moldable_deques[team_i] == NULL) {
+        if (task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i] == 0) {
           continue;
         }
         kmp_uint64 l_work = 0;
@@ -662,7 +662,7 @@ static kmp_int32 __kmp_push_task(kmp_int32 gtid, kmp_task_t *task) {
       for (int l = 0; l < task_team->tt.tt_nproc * MAX_TEAMS_PER_THREAD; l++) {
         int thread_i = l % task_team->tt.tt_nproc;
         int team_i = l / task_team->tt.tt_nproc;
-        if (task_team->tt.tt_threads_data[thread_i].td.td_moldable_deques[team_i] == NULL) {
+        if (task_team->tt.tt_threads_data[thread_i].td.td_moldable_team_sizes[team_i] == 0) {
           continue;
         }
         kmp_uint64 l_work = 0;
@@ -3779,7 +3779,7 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
       if (task == NULL && use_own_tasks) { // check own moldable queue next
         for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-          if (threads_data[tid].td.td_moldable_deques[i] == NULL) {
+          if (threads_data[tid].td.td_moldable_team_sizes[i] == 0) {
             break;
           }
           task = __kmp_remove_my_moldable_task(thread, gtid, task_team, is_constrained, i);
@@ -3919,7 +3919,7 @@ static inline int __kmp_execute_tasks_template(
                   // TODO: Maybe do something smarter than just choosing the
                   // smallest one.
                   for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-                    if (threads_data[tid].td.td_moldable_deques[MAX_TEAMS_PER_THREAD - 1 - i] != NULL) {
+                    if (threads_data[tid].td.td_moldable_team_sizes[MAX_TEAMS_PER_THREAD - 1 - i] != 0) {
                       team_i = MAX_TEAMS_PER_THREAD - 1 - i;
                       victim_mteam = team_i;
                       break;
@@ -4033,7 +4033,7 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
       bool ntasks_left = false;
       for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-        if (threads_data[tid].td.td_moldable_deques[i] == NULL) {
+        if (threads_data[tid].td.td_moldable_team_sizes[i] == 0) {
           continue;
         }
         if (TCR_4(threads_data[tid].td.td_moldable_deque_ntaskss[i]) != 0) {
@@ -4466,7 +4466,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
       int thread_i = l % task_team->tt.tt_nproc;
       int team_i = l / task_team->tt.tt_nproc;
       kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[thread_i];
-      if (thread_data_2->td.td_moldable_deques[team_i] == NULL) {
+      if (thread_data_2->td.td_moldable_team_sizes[team_i] == 0) {
         continue;
       }
       kmp_affin_mask_t *mask = thread_data_2->td.td_moldable_team_affin_masks[team_i];
@@ -4642,6 +4642,17 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
 
     KMP_DEBUG_ASSERT(__kmp_moldable_levels <= __kmp_topology->get_depth());
 
+    // We first clear any previous hierarchy
+    // even though we probably could reuse.
+    for (int i = 0; i < nthreads; i++) {
+      kmp_thread_data_t *thread_data = &(*threads_data_p)[i];
+      for (int team_i = 0; team_i < MAX_TEAMS_PER_THREAD; team_i++) {
+        if (thread_data->td.td_moldable_team_sizes[team_i] != 0) {
+          thread_data->td.td_moldable_team_sizes[team_i] = 0;
+        }
+      }
+    }
+
     KMPAffinity::Mask* tmp_mask;
     KMP_CPU_ALLOC(tmp_mask);
     KMP_CPU_ZERO(tmp_mask);
@@ -4756,7 +4767,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
           
           team_i = -1;
           for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-            if (thread_data->td.td_moldable_deques[i] == NULL) {
+            if (thread_data->td.td_moldable_team_sizes[i] == 0) {
               team_i = i;
               break;
             }
@@ -4798,7 +4809,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
     int thread_i = l % task_team->tt.tt_nproc;
     int team_i = l / task_team->tt.tt_nproc;
     kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[thread_i];
-    if (thread_data_2->td.td_moldable_deques[team_i] == NULL) {
+    if (thread_data_2->td.td_moldable_team_sizes[team_i] == NULL) {
       continue;
     }
 
@@ -5260,7 +5271,7 @@ static bool __kmp_give_task(kmp_info_t *thread, kmp_int32 tid, kmp_task_t *task,
 #if KMP_MOLDABILITY
   if (taskdata->td_moldable) {
     KMP_DEBUG_ASSERT(team_i != -1);
-    if (thread_data->td.td_moldable_deques[team_i] == NULL) {
+    if (thread_data->td.td_moldable_team_sizes[team_i] == 0) {
       // There's no queue in this thread, go find another one
       // We're guaranteed that at least one thread has a queue
       KA_TRACE(30,
