@@ -2699,7 +2699,6 @@ typedef struct kmp_base_task_team {
   volatile kmp_uint32
       tt_active; /* is the team still actively executing tasks */
 #if KMP_MOLDABILITY
-  int tt_moldable_teams_n;
   kmp_bootstrap_lock_t tt_moldable_teams_affinity_lock;
 
   // Mask of occupied processors
