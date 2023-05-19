@@ -3894,7 +3894,6 @@ static inline int __kmp_execute_tasks_template(
                                              unfinished_threads, thread_finished,
                                              is_constrained, victim_mteam, victim_tid_m);
             if (task != NULL) {
-              team_i = victim_mteam;
               moldable_task = true;
             }
           } else {
@@ -3902,9 +3901,8 @@ static inline int __kmp_execute_tasks_template(
             task = __kmp_steal_task(other_thread, gtid, task_team,
                                     unfinished_threads, thread_finished,
                                     is_constrained, victim_tid);
-            if (task != NULL) {
-              team_i = -1;
-            } else if (steal_moldable) {
+            
+            if (task == NULL && steal_moldable) {
               KMP_DEBUG_ASSERT(victim_tid_m != -1);
               // We didn't have any normal task to steal so we'll start
               // stealing moldable tasks by looking through the deques of other_thread.
@@ -3914,20 +3912,8 @@ static inline int __kmp_execute_tasks_template(
                                         is_constrained, i, victim_tid_m);
                 if (task != NULL) {
                   KA_TRACE(5, ("Stole Moldable task: %d -> %d\n", victim_tid_m, tid));
-                  // We will execute our moldable task on the team at the end
-                  // of td_moldable_deques, which should be the smallest one.
-                  // TODO: Maybe do something smarter than just choosing the
-                  // smallest one.
-                  for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-                    if (threads_data[tid].td.td_moldable_team_sizes[MAX_TEAMS_PER_THREAD - 1 - i] != 0) {
-                      team_i = MAX_TEAMS_PER_THREAD - 1 - i;
-                      victim_mteam = team_i;
-                      break;
-                    }
-                  }
+                  victim_mteam = i;
                   moldable_task = true;
-                  KMP_DEBUG_ASSERT(team_i != -1);
-                  KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] == 1);
                   break;
                 }
               }
@@ -3937,6 +3923,20 @@ static inline int __kmp_execute_tasks_template(
         if (task != NULL) { // set last stolen to victim
           bool changed = false;
           if (moldable_task) {
+
+            // We will execute our moldable task on the team at the end
+            // of td_moldable_deques, which should be the smalles one.
+            // TODO: Maybe do something smarter than just choosing the
+            // smallest one.
+            for (int j = 0; j < MAX_TEAMS_PER_THREAD; j++) {
+              if (threads_data[tid].td.td_moldable_team_sizes[MAX_TEAMS_PER_THREAD - 1 - j] != 0) {
+                team_i = MAX_TEAMS_PER_THREAD - 1 - j;
+                break;
+              }
+            }
+            KMP_DEBUG_ASSERT(team_i != -1);
+            KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] == 1);
+
             if (threads_data[tid].td.td_deque_last_stolen_mteam != victim_mteam) {
               threads_data[tid].td.td_deque_last_stolen_mteam = victim_mteam;
               changed = true;
@@ -3945,7 +3945,6 @@ static inline int __kmp_execute_tasks_template(
               threads_data[tid].td.td_deque_last_stolen_m = victim_tid_m;
               changed = true;
             }
-            KMP_DEBUG_ASSERT(victim_mteam == team_i);
           } else {
             if (threads_data[tid].td.td_deque_last_stolen != victim_tid) {
               threads_data[tid].td.td_deque_last_stolen = victim_tid;
@@ -4948,7 +4947,7 @@ void __kmp_free_task_team(kmp_info_t *thread, kmp_task_team_t *task_team) {
 #if KMP_MOLDABILITY
   // we print all estimated task costs for debugging purposes
   kmp_task_stats_t *task_stats;
-  if (__kmp_task_stats_list != NULL) {
+  if (__kmp_task_stats_list != NULL && thread == NULL) {
     __kmp_acquire_bootstrap_lock(&__kmp_stdio_lock);
     while ((task_stats = __kmp_task_stats_list) != NULL) {
       __kmp_task_stats_list = task_stats->ts.ts_next;
