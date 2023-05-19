@@ -4809,7 +4809,7 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
     int thread_i = l % task_team->tt.tt_nproc;
     int team_i = l / task_team->tt.tt_nproc;
     kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[thread_i];
-    if (thread_data_2->td.td_moldable_team_sizes[team_i] == NULL) {
+    if (thread_data_2->td.td_moldable_team_sizes[team_i] == 0) {
       continue;
     }
 
