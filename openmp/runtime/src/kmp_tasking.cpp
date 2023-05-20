@@ -4466,7 +4466,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
     // We iterate through moldable teams backwards so we start with the smallest teams first,
     // as small teams which include `t` will be "closer" to `t`.
     for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-      for (int master_thread = 0; i < task_team->tt.tt_nproc; i++) {
+      for (int master_thread = 0; master_thread < task_team->tt.tt_nproc; master_thread++) {
         kmp_int32 tc = team_count[master_thread];
         if (i >= tc) {
           continue;
