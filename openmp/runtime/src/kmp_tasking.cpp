@@ -4429,8 +4429,24 @@ static int id_to_mask_i(int *ids) {
 // Iterate over every thread in `task_team` and create its `td_steal_order`, which is used for moldable work stealing.
 // `thread` is only used for sampling random numbers
 static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thread) {
-  for (int t = 0; t < task_team->tt.tt_nproc; t++) {
+  // First we list how many moldable teams each thread has
+  kmp_int32 *team_count = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * task_team->tt.tt_nproc);
+  for (int i = 0; i < task_team->tt.tt_nproc; i++) {
+    kmp_thread_data_t *thread_data = &task_team->tt.tt_threads_data[i];
+    kmp_int32 j;
+    for (j = 0; j < MAX_TEAMS_PER_THREAD; j++) {
+      if (thread_data->td.td_moldable_team_sizes[j] == 0) {
+        break;
+      }
+    }
+    team_count[i] = j;
+  }
 
+  for (int t = 0; t < task_team->tt.tt_nproc; t++) {
+    // First check if we even have any team to run the task on after we steal it
+    if (team_count[t] == 0) {
+      continue;
+    }
     kmp_thread_data_t *thread_data = &task_team->tt.tt_threads_data[t];
 
     // Remove old steal_order
@@ -4438,19 +4454,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
       __kmp_free(thread_data->td.td_steal_order);
     }
 
-    // First check if we even have any team to run the task on after we steal it
-    bool found = false;
-    for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-      if (thread_data->td.td_moldable_team_sizes[i] != 0) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      thread_data->td.td_steal_order_len = 0;
-      continue;
-    }
-    // Our steal order will contain every other thread
+    // Our steal order will contain at most every other thread
     kmp_int32 other_threads = task_team->tt.tt_nproc - 1;
 
     thread_data->td.td_steal_order = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
@@ -4461,77 +4465,79 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
 
     // We iterate through moldable teams backwards so we start with the smallest teams first,
     // as small teams which include `t` will be "closer" to `t`.
-    for (int l = (task_team->tt.tt_nproc * MAX_TEAMS_PER_THREAD)-1; l >= 0; l--) {
-      int thread_i = l % task_team->tt.tt_nproc;
-      int team_i = l / task_team->tt.tt_nproc;
-      kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[thread_i];
-      if (thread_data_2->td.td_moldable_team_sizes[team_i] == 0) {
-        continue;
-      }
-      kmp_affin_mask_t *mask = thread_data_2->td.td_moldable_team_affin_masks[team_i];
-
-      // We'll ignore our own team as we don't want to steal from ourselves.
-      if (thread_i == t) {
-        continue;
-      }
-
-      int t2;
-      // We keep the new numbers in a seperate list so that we can randomize it.
-      kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
-      int tmp_list_len = 0;
-      KMP_CPU_SET_ITERATE(t2, mask) {
-
-        // CPU_SET_ITERATE should only return set bits.
-        KMP_DEBUG_ASSERT(KMP_CPU_ISSET(t2, mask));
-
-        // We won't steal from ourselves
-        if (t2 == t) {
+    for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
+      for (int master_thread = 0; i < task_team->tt.tt_nproc; i++) {
+        kmp_int32 tc = team_count[master_thread];
+        if (i >= tc) {
           continue;
         }
+        int team_i = (tc - i) - 1;
+        KMP_DEBUG_ASSERT(0 <= team_i && team_i < MAX_TEAMS_PER_THREAD);
 
-        // We skip any thread which is part of `l` if we've seen it before
-        bool duplicate = false;
-        for (int t3 = 0; t3 < last; t3++) {
-          if (thread_data->td.td_steal_order[t3] == thread_i) {
-            duplicate = true;
-            break;
+        kmp_thread_data_t *thread_data_2 = &task_team->tt.tt_threads_data[master_thread];
+        kmp_affin_mask_t *mask = thread_data_2->td.td_moldable_team_affin_masks[team_i];
+
+
+        if (KMP_CPU_ISSET(t, mask)) {
+          // We keep the new numbers in a seperate list so that we can randomize it.
+          kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
+          int tmp_list_len = 0;
+
+          int t2;
+          KMP_CPU_SET_ITERATE(t2, mask) {
+            // CPU_SET_ITERATE should only return set bits.
+            KMP_DEBUG_ASSERT(KMP_CPU_ISSET(t2, mask));
+
+            if (t2 == t || team_count[t2] == 0) {
+              continue;
+            }
+
+            // We skip any thread which is part of `l` if we've seen it before
+            bool duplicate = false;
+            for (int t3 = 0; t3 < last; t3++) {
+              if (thread_data->td.td_steal_order[t3] == t2) {
+                duplicate = true;
+                break;
+              }
+            }
+            for (int t3 = 0; t3 < tmp_list_len; t3++) {
+              if (tmp_list[t3] == t2) {
+                duplicate = true;
+                break;
+              }
+            }
+            if (!duplicate) {
+              tmp_list[tmp_list_len] = t2;
+              tmp_list_len++;
+              KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
+            }
           }
-        }
-        for (int t3 = 0; t3 < tmp_list_len; t3++) {
-          if (tmp_list[t3] == thread_i) {
-            duplicate = true;
-            break;
+
+          // Shuffle tmp_list, version of Fisher-Yates
+          for (int i = 0; i < tmp_list_len-1; ++i) {
+            int j = __kmp_get_random(thread) % (tmp_list_len-i) + i;
+            KMP_DEBUG_ASSERT(j < tmp_list_len);
+            KMP_DEBUG_ASSERT(i <= j);
+
+            kmp_int32 temp = tmp_list[i];
+            tmp_list[i] = tmp_list[j];
+            tmp_list[j] = temp;
           }
+
+          for (int i = 0; i < tmp_list_len; ++i) {
+              KA_TRACE(1, ("%d, ", tmp_list[i]));
+              thread_data->td.td_steal_order[last] = tmp_list[i];
+              last++;
+          }
+          __kmp_free(tmp_list);
         }
-        if (!duplicate) {
-          tmp_list[tmp_list_len] = thread_i;
-          tmp_list_len++;
-          KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
-        }
       }
-
-      // Shuffle tmp_list, version of Fisher-Yates
-      for (int i = 0; i < tmp_list_len-1; ++i) {
-        int j = __kmp_get_random(thread) % (tmp_list_len-i) + i;
-        KMP_DEBUG_ASSERT(j < tmp_list_len);
-        KMP_DEBUG_ASSERT(i <= j);
-
-        kmp_int32 temp = tmp_list[i];
-        tmp_list[i] = tmp_list[j];
-        tmp_list[j] = temp;
-      }
-
-      for (int i = 0; i < tmp_list_len; ++i) {
-          KA_TRACE(1, ("%d, ", tmp_list[i]));
-          thread_data->td.td_steal_order[last] = tmp_list[i];
-          last++;
-      }
-      __kmp_free(tmp_list);
     }
     thread_data->td.td_steal_order_len = last;
     KMP_DEBUG_ASSERT(last <= other_threads);
     KA_TRACE(1, ("\n"));
   }
+  __kmp_free(team_count);
 }
 
 // __kmp_realloc_task_threads_data:
