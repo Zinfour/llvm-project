@@ -3768,10 +3768,6 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
     if (__kmp_moldable_oversubscription_method == 1) {
       if (KMP_CPU_ISSET(tid, task_team->tt.tt_moldable_teams_affinity_mask)) {
-
-        // KA_TRACE(1, ("busy wow: T#%d final_spin=%d "
-        //               "*thread_finished=%d\n",
-        //               gtid, final_spin, *thread_finished));
         return FALSE;
       }
     }
@@ -3990,10 +3986,8 @@ static inline int __kmp_execute_tasks_template(
                   KMP_YIELD_OVERSUB_ELSE_SPIN(spins, time);
                   continue;
                 }
-                // KMP_DEBUG_ASSERT(KMP_CPU_ISSET(tid, global_mask));
                 KMP_DEBUG_ASSERT(KMP_CPU_ISSET(tid, task_mask));
                 KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
-                // KMP_CPU_CLR(tid, task_team->tt.tt_moldable_teams_affinity_mask);
                 
                 __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
               }
