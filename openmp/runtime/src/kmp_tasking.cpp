@@ -2066,7 +2066,7 @@ static void __kmp_get_time_helper(int *gtid, int *npr, std::atomic<kmp_uint64> *
   KMP_ATOMIC_ADD_RLX(cost, r_usage.ru_utime.tv_sec * 1000000 + r_usage.ru_utime.tv_usec + r_usage.ru_stime.tv_sec * 1000000 + r_usage.ru_stime.tv_usec);
 }
 
-static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task, kmp_affin_mask_t *mask, kmp_affin_mask_t *new_mask, kmp_uint64 *cost) {
+static void __kmp_invoke_task_dummy2(int *gtid, int *npr, void *task, kmp_uint64 *cost) {
   std::atomic<kmp_uint64> times_before = 0;
   if (__kmp_moldable_time_method == 1) {
     __kmpc_fork_call(KMP_TASK_TO_TASKDATA(task)->td_ident, 1, VOLATILE_CAST(microtask_t) __kmp_get_time_helper, &times_before);
@@ -3308,10 +3308,10 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   kmp_affin_mask_t *task_mask;
   kmp_affin_mask_t *global_mask;
   if (__kmp_moldable_oversubscription_method == 1) {
-    kmp_affin_mask_t *task_mask = thread_data->td.td_moldable_team_affin_masks[team_i];
-    kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+    task_mask = thread_data->td.td_moldable_team_affin_masks[team_i];
+    global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
     KMP_CPU_SET_ITERATE(i, task_mask) {
-      if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
+      if (KMP_CPU_ISSET(i, global_mask)) {
         __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
         KA_TRACE(10,
                 ("__kmp_remove_my_moldable_task(exit #3): T#%d moldable task not removed, would cause oversubscription: "
@@ -3321,13 +3321,11 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
         return NULL;
       }
     }
-  }
 
-  if (__kmp_moldable_oversubscription_method == 1) {
     __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
 
     KMP_CPU_SET_ITERATE(i, task_mask) {
-      if (KMP_CPU_ISSET(i, task_mask) && KMP_CPU_ISSET(i, global_mask)) {
+      if (KMP_CPU_ISSET(i, global_mask)) {
         __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
         __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
         KA_TRACE(10,
@@ -3671,7 +3669,7 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
 
   __kmp_push_num_teams(taskdata->td_ident, gtid, 1, threads_data[tid].td.td_moldable_team_sizes[team_i]);
   kmp_uint64 cost = 0;
-  __kmpc_fork_teams(taskdata->td_ident, 4, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, thread->th.th_affin_mask, threads_data[tid].td.td_moldable_team_affin_masks[team_i], &cost);
+  __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
 
   if (__kmp_moldable_oversubscription_method == 1) {
     __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
@@ -3766,6 +3764,18 @@ static inline int __kmp_execute_tasks_template(
   while (1) { // Outer loop keeps trying to find tasks in case of single thread
     // getting tasks from target constructs
     while (1) { // Inner loop to find a task and execute it
+
+#if KMP_MOLDABILITY
+    if (__kmp_moldable_oversubscription_method == 1) {
+      if (KMP_CPU_ISSET(tid, task_team->tt.tt_moldable_teams_affinity_mask)) {
+
+        // KA_TRACE(1, ("busy wow: T#%d final_spin=%d "
+        //               "*thread_finished=%d\n",
+        //               gtid, final_spin, *thread_finished));
+        return FALSE;
+      }
+    }
+#endif
       task = NULL;
 #if KMP_MOLDABILITY
       team_i = -1;
@@ -3779,12 +3789,12 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
       if (task == NULL && use_own_tasks) { // check own moldable queue next
         for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-          if (threads_data[tid].td.td_moldable_team_sizes[i] == 0) {
-            break;
+          if (threads_data[tid].td.td_moldable_team_sizes[MAX_TEAMS_PER_THREAD - 1 - i] == 0) {
+            continue;
           }
-          task = __kmp_remove_my_moldable_task(thread, gtid, task_team, is_constrained, i);
+          task = __kmp_remove_my_moldable_task(thread, gtid, task_team, is_constrained, MAX_TEAMS_PER_THREAD - 1 - i);
           if (task != NULL) {
-            team_i = i;
+            team_i = MAX_TEAMS_PER_THREAD - 1 - i;
             break;
           }
         }
@@ -3923,19 +3933,72 @@ static inline int __kmp_execute_tasks_template(
         if (task != NULL) { // set last stolen to victim
           bool changed = false;
           if (moldable_task) {
-
-            // We will execute our moldable task on the team at the end
-            // of td_moldable_deques, which should be the smalles one.
-            // TODO: Maybe do something smarter than just choosing the
-            // smallest one.
-            for (int j = 0; j < MAX_TEAMS_PER_THREAD; j++) {
-              if (threads_data[tid].td.td_moldable_team_sizes[MAX_TEAMS_PER_THREAD - 1 - j] != 0) {
-                team_i = MAX_TEAMS_PER_THREAD - 1 - j;
-                break;
+            kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
+            // we choose the lowest runtime team.
+            int spins;
+            int time;
+            KMP_INIT_YIELD(spins); // Setup for waiting
+            KMP_INIT_BACKOFF(time);
+            while (true) {
+              bool cont;
+              int i;
+              kmp_uint64 best_so_far = UINT64_MAX;
+              kmp_affin_mask_t *task_mask;
+              kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
+              team_i = -1;
+              for (int j = 0; j < MAX_TEAMS_PER_THREAD; j++) {
+                int team_j = MAX_TEAMS_PER_THREAD - 1 - j;
+                kmp_int32 team_size = threads_data[tid].td.td_moldable_team_sizes[team_j];
+                if (team_size != 0) {
+                  kmp_uint64 runtime = taskdata->td_task_stats->ts.ts_cost[(team_j) * task_team->tt.tt_nproc + tid] / (kmp_int64) team_size;
+                  if (runtime < best_so_far) {
+                    if (__kmp_moldable_oversubscription_method == 1) {
+                      task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_j];
+                      cont = false;
+                      KMP_CPU_SET_ITERATE(i, task_mask) {
+                        if (KMP_CPU_ISSET(i, global_mask)) {
+                          cont = true;
+                          break;
+                        }
+                      }
+                      if (cont) {
+                        continue;
+                      }
+                    }
+                    best_so_far = runtime;
+                    team_i = team_j;
+                  }
+                }
               }
+              if (team_i == -1) {
+                KMP_YIELD_OVERSUB_ELSE_SPIN(spins, time);
+                continue;
+              }
+
+              if (__kmp_moldable_oversubscription_method == 1) {
+                __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+                task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
+                cont = false;
+                KMP_CPU_SET_ITERATE(i, task_mask) {
+                  if (KMP_CPU_ISSET(i, global_mask)) {
+                    cont = true;
+                    break;
+                  }
+                }
+                if (cont) {
+                  __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+                  KMP_YIELD_OVERSUB_ELSE_SPIN(spins, time);
+                  continue;
+                }
+                // KMP_DEBUG_ASSERT(KMP_CPU_ISSET(tid, global_mask));
+                KMP_DEBUG_ASSERT(KMP_CPU_ISSET(tid, task_mask));
+                KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
+                // KMP_CPU_CLR(tid, task_team->tt.tt_moldable_teams_affinity_mask);
+                
+                __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+              }
+              break;
             }
-            KMP_DEBUG_ASSERT(team_i != -1);
-            KMP_DEBUG_ASSERT(threads_data[tid].td.td_moldable_team_sizes[team_i] == 1);
 
             if (threads_data[tid].td.td_deque_last_stolen_mteam != victim_mteam) {
               threads_data[tid].td.td_deque_last_stolen_mteam = victim_mteam;
