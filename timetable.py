@@ -4,6 +4,7 @@ import csv
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import itertools
+import numpy as np
 
 import sys
 
@@ -25,10 +26,11 @@ with open(filename, 'r') as csvfile:
             datapoints.append((int(row[1]), int(row[2]), int(row[3]), row[5]))
             names.add(row[5])
 
-datapoints.sort(key=lambda x: x[0])
+print(len(datapoints))
+datapoints.sort(key=lambda x: (x[0], x[3]))
 names = list(names)
 names.sort()
-groups = [(i, list(group)) for (i, group) in itertools.groupby(datapoints, lambda x: x[0])]
+groups = [((i, name), list(group)) for ((i, name), group) in itertools.groupby(datapoints, lambda x: (x[0], x[3]))]
 
 # print(datapoints)
 # Declaring a figure "gnt"
@@ -44,10 +46,12 @@ fig, gnt = plt.subplots()
 gnt.set_xlabel('microseconds since start')
 gnt.set_ylabel('Gtid')
 
+gtids = list(set(map(lambda x: x[0][0], groups)))
+
 # Setting ticks on y-axis
-gnt.set_yticks(list(map(lambda x: x+0.5, range(len(groups)))))
+gnt.set_yticks(list(map(lambda x: x+0.5, range(len(gtids)))))
 # # Labelling tickes of y-axis
-gnt.set_yticklabels(list(map(lambda x: str(x[0]), groups)))
+gnt.set_yticklabels(list(map(lambda x: str(x), gtids)))
 
 # We will color the bar depending on 3 factors, so we map them to RGB
 funcs = set()
@@ -57,35 +61,51 @@ ends = set()
 for n in names:
     _blank, _file, func, line, _col, _blanc, end = n.split(sep=";")
     funcs.add(func)
-    lines.add(line)
-    ends.add(end)
+    lines.add(int(line))
+    ends.add(int(end))
 
 funcs = sorted(list(funcs))
 lines = sorted(list(lines))
 ends = sorted(list(ends))
+def perc(a, aa):
+    if len(aa) == 1:
+        return 0.1
+    else:
+        return aa.index(a) / (len(aa) - 1)
 
 # Does nothine when 1
 scale_factor = 1
 def get_color(func, line, end):
-    r = funcs.index(func) / len(funcs)
-    g = lines.index(line) / len(lines)
-    b = ends.index(end)   / len(ends)
+    r = perc(func, funcs)
+    g = perc(line, lines)
+    b = perc(end, ends)
 
     addi = 0.5 - (0.5/scale_factor)
 
     r = (r / scale_factor) + addi
     g = (g / scale_factor) + addi
     b = (b / scale_factor) + addi
-    return (r, g, b, 1.0)
+    return [r, g, b, 1.0]
 
 mapping = {}
 for n in names:
-    _blank, _file, func, line, _col, _blanc, end = n.split(sep=";")
-    mapping[n] = get_color(func, line, end)
+    _blank, _file, func, line, col, _blanc, end = n.split(sep=";")
+    if line == '0' and col == '0':
+        mapping[n] = np.random.rand(3,)
+    else:
+        mapping[n] = get_color(func, int(line), int(end))
 
 
-for i, (gtid, group) in enumerate(groups):
-    gnt.broken_barh(list(map(lambda x: (x[1], x[2] - x[1]), group)), (i, 0.9), facecolors=list(map(lambda x: mapping[x[3]], group)), alpha=0.5, edgecolor='black', linewidth=1)
+for i, ((gtid, name), group) in enumerate(groups):
+    print(i, gtid, name)
+    gnt.broken_barh(
+        list(map(lambda x: (x[1], x[2] - x[1]), group)),
+        (gtids.index(gtid) + (names.index(name) / (len(names)*4)), 0.75),
+        facecolors=list(map(lambda x: mapping[x[3]], group)),
+        alpha=0.5,
+        edgecolor='black',
+        linewidth=0.2
+    )
 
 legend_data = []
 for x, y in mapping.items():
