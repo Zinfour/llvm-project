@@ -221,6 +221,8 @@ int __kmp_moldable_exp_average = 10; // controls the amount of smoothing.
 int __kmp_moldable_oversubscription_method = 0; // 0=no protection against oversubscription.
 int __kmp_moldable_work_stealing = 0; // 0=disabled, 1=enabled
 int __kmp_moldable_push_to_own_queue = 0; // should we give tasks to queues or push to own queue.
+int __kmp_moldable_replicate_queues = 0; // should we replicate queues to all threads so
+                                         // that they can all launch threads with large widths?
 #endif
 
 #if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT

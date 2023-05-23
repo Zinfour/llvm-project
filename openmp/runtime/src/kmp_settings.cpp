@@ -669,6 +669,7 @@ static void __kmp_stg_print_nteams(kmp_str_buf_t *buffer, char const *name,
 } // __kmp_stg_print_nteams
 
 #if KMP_MOLDABILITY
+// KMP_MOLDABLE_LEVELS
 static void __kmp_stg_parse_moldable_levels(char const *name, char const *value,
                                    void *data) {
   // TODO: Is KMP_HW_LAST the correct upper bound?
@@ -676,12 +677,12 @@ static void __kmp_stg_parse_moldable_levels(char const *name, char const *value,
   K_DIAG(1, ("__kmp_moldable_levels == %d\n", __kmp_moldable_levels));
 } // __kmp_stg_parse_moldable_levels
 
-
 static void __kmp_stg_print_moldable_levels(kmp_str_buf_t *buffer, char const *name,
                                    void *data) {
   __kmp_stg_print_int(buffer, name, __kmp_moldable_levels);
 } // __kmp_stg_print_moldable_levels
 
+// KMP_MOLDABLE_TIME_METHOD
 static void __kmp_stg_parse_moldable_time_method(char const *name, char const *value,
                                    void *data) {
   __kmp_stg_parse_int(name, value, 0, 1, &__kmp_moldable_time_method);
@@ -694,55 +695,66 @@ static void __kmp_stg_print_moldable_time_method(kmp_str_buf_t *buffer, char con
   __kmp_stg_print_int(buffer, name, __kmp_moldable_time_method);
 } // __kmp_stg_print_moldable_time_method
 
+// KMP_MOLDABLE_EXP_AVERAGE
 static void __kmp_stg_parse_moldable_exp_average(char const *name, char const *value,
                                    void *data) {
   __kmp_stg_parse_int(name, value, 0, INT_MAX, &__kmp_moldable_exp_average);
   K_DIAG(1, ("__kmp_moldable_exp_average == %d\n", __kmp_moldable_exp_average));
 } // __kmp_stg_parse_moldable_exp_average
 
-
 static void __kmp_stg_print_moldable_exp_average(kmp_str_buf_t *buffer, char const *name,
                                    void *data) {
   __kmp_stg_print_int(buffer, name, __kmp_moldable_exp_average);
 } // __kmp_stg_print_moldable_exp_average
 
+// KMP_MOLDABLE_OVERSUBSCRIPTION_METHOD
 static void __kmp_stg_parse_moldable_oversubscription_method(char const *name, char const *value,
                                    void *data) {
   __kmp_stg_parse_int(name, value, 0, 2, &__kmp_moldable_oversubscription_method);
   K_DIAG(1, ("__kmp_moldable_oversubscription_method == %d\n", __kmp_moldable_oversubscription_method));
 } // __kmp_stg_parse_moldable_oversubscription_method
 
-
 static void __kmp_stg_print_moldable_oversubscription_method(kmp_str_buf_t *buffer, char const *name,
                                    void *data) {
   __kmp_stg_print_int(buffer, name, __kmp_moldable_oversubscription_method);
 } // __kmp_stg_print_moldable_oversubscription_method
 
+// KMP_MOLDABLE_WORK_STEALING
 static void __kmp_stg_parse_moldable_work_stealing(char const *name, char const *value,
                                    void *data) {
   __kmp_stg_parse_int(name, value, 0, 1, &__kmp_moldable_work_stealing);
   K_DIAG(1, ("__kmp_moldable_work_stealing == %d\n", __kmp_moldable_work_stealing));
 } // __kmp_stg_parse_moldable_work_stealing
 
-
 static void __kmp_stg_print_moldable_work_stealing(kmp_str_buf_t *buffer, char const *name,
                                    void *data) {
   __kmp_stg_print_int(buffer, name, __kmp_moldable_work_stealing);
 } // __kmp_stg_print_moldable_work_stealing
 
+// KMP_MOLDABLE_PUSH_TO_OWN_QUEUE
 static void __kmp_stg_parse_moldable_push_to_own_queue(char const *name, char const *value,
                                    void *data) {
   __kmp_stg_parse_int(name, value, 0, 1, &__kmp_moldable_push_to_own_queue);
   K_DIAG(1, ("__kmp_moldable_push_to_own_queue == %d\n", __kmp_moldable_push_to_own_queue));
 } // __kmp_stg_parse_moldable_push_to_own_queue
 
-
 static void __kmp_stg_print_moldable_push_to_own_queue(kmp_str_buf_t *buffer, char const *name,
                                    void *data) {
   __kmp_stg_print_int(buffer, name, __kmp_moldable_push_to_own_queue);
 } // __kmp_stg_print_moldable_push_to_own_queue
-#endif
 
+// KMP_MOLDABLE_REPLICATE_QUEUES
+static void __kmp_stg_parse_moldable_replicate_queues(char const *name, char const *value,
+                                   void *data) {
+  __kmp_stg_parse_int(name, value, 0, 1, &__kmp_moldable_replicate_queues);
+  K_DIAG(1, ("__kmp_moldable_replicate_queues == %d\n", __kmp_moldable_replicate_queues));
+} // __kmp_stg_parse_moldable_replicate_queues
+
+static void __kmp_stg_print_moldable_replicate_queues(kmp_str_buf_t *buffer, char const *name,
+                                   void *data) {
+  __kmp_stg_print_int(buffer, name, __kmp_moldable_replicate_queues);
+} // __kmp_stg_print_moldable_replicate_queues
+#endif // KMP_MOLDABILITY
 // -----------------------------------------------------------------------------
 // OMP_TEAMS_THREAD_LIMIT
 static void __kmp_stg_parse_teams_th_limit(char const *name, char const *value,
@@ -5487,6 +5499,8 @@ static kmp_setting_t __kmp_stg_table[] = {
     {"KMP_MOLDABLE_WORK_STEALING", __kmp_stg_parse_moldable_work_stealing, __kmp_stg_print_moldable_work_stealing, NULL, 0,
      0},
     {"KMP_MOLDABLE_PUSH_TO_OWN_QUEUE", __kmp_stg_parse_moldable_push_to_own_queue, __kmp_stg_print_moldable_push_to_own_queue, NULL, 0,
+     0},
+    {"KMP_MOLDABLE_REPLICATE_QUEUES", __kmp_stg_parse_moldable_replicate_queues, __kmp_stg_print_moldable_replicate_queues, NULL, 0,
      0},
 #endif
     {"OMP_TEAMS_THREAD_LIMIT", __kmp_stg_parse_teams_th_limit,

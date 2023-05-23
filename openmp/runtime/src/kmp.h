@@ -3417,6 +3417,7 @@ extern int __kmp_moldable_exp_average;
 extern int __kmp_moldable_oversubscription_method;
 extern int __kmp_moldable_work_stealing;
 extern int __kmp_moldable_push_to_own_queue;
+extern int __kmp_moldable_replicate_queues;
 #endif
 
 /* ------------------------------------------------------------------------- */

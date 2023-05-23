@@ -4779,20 +4779,20 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
       bool new_team = true;
       int team_i;
       int team_size;
-      int master_thread;
+      int first_thread;
       for(;;) {
         if (new_team) {
           i++;
 
-          master_thread = -1;
+          first_thread = -1;
           team_size = 0;
           KMP_CPU_ZERO(tmp_mask);
           new_team = false;
         }
 
         int j = id_to_mask_i(cur_id);
-        if (master_thread == -1) {
-          master_thread = j;
+        if (first_thread == -1) {
+          first_thread = j;
         }
         KMP_DEBUG_ASSERT(j != -1);
         KMP_CPU_SET(j, tmp_mask);
@@ -4829,32 +4829,41 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
           }
         }
         if (done || new_team) {
-          KMP_DEBUG_ASSERT(master_thread < nthreads);
-
-          thread_data = &(*threads_data_p)[master_thread];
+          KMP_DEBUG_ASSERT(first_thread < nthreads);
+          int current_thread;
+          KMP_CPU_SET_ITERATE(current_thread, tmp_mask) {
+            if (__kmp_moldable_replicate_queues == 0) {
+              current_thread = first_thread;
+            }
+            thread_data = &(*threads_data_p)[current_thread];
           
-          team_i = -1;
-          for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-            if (thread_data->td.td_moldable_team_sizes[i] == 0) {
-              team_i = i;
+            team_i = -1;
+            for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
+              if (thread_data->td.td_moldable_team_sizes[i] == 0) {
+                team_i = i;
+                break;
+              }
+            }
+            KMP_DEBUG_ASSERT(team_i != -1);
+            KMP_DEBUG_ASSERT(team_i < MAX_TEAMS_PER_THREAD);
+            thread_data->td.td_thr = team->t.t_threads[current_thread];
+
+            if (UNLIKELY(thread_data->td.td_moldable_deques[team_i] == NULL)) {
+              __kmp_alloc_moldable_task_deque(team->t.t_threads[current_thread], thread_data, team_i);
+            }
+            KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0);
+            KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == thread_data->td.td_moldable_deque_tails[team_i]);
+
+            if (thread_data->td.td_moldable_team_affin_masks[team_i] == NULL) {
+              KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_masks[team_i]);
+            }
+            KMP_CPU_COPY(thread_data->td.td_moldable_team_affin_masks[team_i], tmp_mask);
+            thread_data->td.td_moldable_team_sizes[team_i] = team_size;
+
+            if (__kmp_moldable_replicate_queues == 0) {
               break;
             }
           }
-          KMP_DEBUG_ASSERT(team_i != -1);
-          KMP_DEBUG_ASSERT(team_i < MAX_TEAMS_PER_THREAD);
-          thread_data->td.td_thr = team->t.t_threads[master_thread];
-
-          if (UNLIKELY(thread_data->td.td_moldable_deques[team_i] == NULL)) {
-            __kmp_alloc_moldable_task_deque(team->t.t_threads[master_thread], thread_data, team_i);
-          }
-          KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0);
-          KMP_DEBUG_ASSERT(thread_data->td.td_moldable_deque_heads[team_i] == thread_data->td.td_moldable_deque_tails[team_i]);
-
-          if (thread_data->td.td_moldable_team_affin_masks[team_i] == NULL) {
-            KMP_CPU_ALLOC(thread_data->td.td_moldable_team_affin_masks[team_i]);
-          }
-          KMP_CPU_COPY(thread_data->td.td_moldable_team_affin_masks[team_i], tmp_mask);
-          thread_data->td.td_moldable_team_sizes[team_i] = team_size;
         }
 
         if (done)
@@ -5016,11 +5025,12 @@ void __kmp_free_task_team(kmp_info_t *thread, kmp_task_team_t *task_team) {
 #if KMP_MOLDABILITY
   // we print all estimated task costs for debugging purposes
   kmp_task_stats_t *task_stats;
-  if (__kmp_task_stats_list != NULL && thread == NULL) {
+#if KMP_DEBUG
+  if (kmp_a_debug > 0 && __kmp_task_stats_list != NULL && thread == NULL) {
     __kmp_acquire_bootstrap_lock(&__kmp_stdio_lock);
     while ((task_stats = __kmp_task_stats_list) != NULL) {
       __kmp_task_stats_list = task_stats->ts.ts_next;
-      __kmp_printf_no_lock("Task %p ", task_stats->ts.ts_routine);
+      __kmp_printf_no_lock("Task cost %p ", task_stats->ts.ts_routine);
       if (task_stats->ts.ts_ident->psource != NULL) {
         __kmp_printf_no_lock(", %s", task_stats->ts.ts_ident->psource);
       }
@@ -5032,7 +5042,8 @@ void __kmp_free_task_team(kmp_info_t *thread, kmp_task_team_t *task_team) {
     }
     __kmp_release_bootstrap_lock(&__kmp_stdio_lock);
   }
-#endif
+#endif // KMP_DEBUG
+#endif // KMP_MOLDABILITY
   KMP_DEBUG_ASSERT(task_team->tt.tt_next == NULL);
   task_team->tt.tt_next = __kmp_free_task_teams;
   TCW_PTR(__kmp_free_task_teams, task_team);
