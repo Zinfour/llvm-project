@@ -673,7 +673,7 @@ static void __kmp_stg_print_nteams(kmp_str_buf_t *buffer, char const *name,
 static void __kmp_stg_parse_moldable_levels(char const *name, char const *value,
                                    void *data) {
   // TODO: Is KMP_HW_LAST the correct upper bound?
-  __kmp_stg_parse_int(name, value, 1, KMP_HW_LAST, &__kmp_moldable_levels);
+  __kmp_stg_parse_int(name, value, 1, MAX_TEAMS_PER_THREAD, &__kmp_moldable_levels);
   K_DIAG(1, ("__kmp_moldable_levels == %d\n", __kmp_moldable_levels));
 } // __kmp_stg_parse_moldable_levels
 

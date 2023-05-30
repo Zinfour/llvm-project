@@ -2595,7 +2595,7 @@ struct kmp_taskdata { /* aligned during dynamic allocation       */
 // Make sure padding above worked
 KMP_BUILD_ASSERT(sizeof(kmp_taskdata_t) % sizeof(void *) == 0);
 #if KMP_MOLDABILITY
-#define MAX_TEAMS_PER_THREAD 4
+#define MAX_TEAMS_PER_THREAD 5
 #endif
 // Data for task team but per thread
 typedef struct kmp_base_thread_data {
