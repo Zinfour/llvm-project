@@ -2800,6 +2800,7 @@ typedef struct KMP_ALIGN_CACHE kmp_base_info {
   kmp_affin_mask_t *th_affin_mask; /* thread's current affinity mask */
   kmp_affinity_ids_t th_topology_ids; /* thread's current topology ids */
   kmp_affinity_attrs_t th_topology_attrs; /* thread's current topology attrs */
+  int is_moldable;
 #endif
   omp_allocator_handle_t th_def_allocator; /* default allocator */
   /* The data set by the primary thread at reinit, then R/W by the worker */

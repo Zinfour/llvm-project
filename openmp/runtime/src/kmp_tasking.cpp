@@ -3703,6 +3703,7 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_int32 ti
   KMP_CPU_COPY(old_mask, thread->th.th_affin_mask);
   KMP_CPU_COPY(thread->th.th_affin_mask, threads_data[tid].td.td_moldable_team_affin_masks[team_i]);
   __kmp_set_system_affinity(thread->th.th_affin_mask, true);
+  thread->th.is_moldable = 1;
 
   kmp_task_stats_t *current_task_stats = taskdata->td_task_stats;
 
@@ -3764,6 +3765,7 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_int32 ti
   KMP_CPU_COPY(thread->th.th_affin_mask, old_mask);
   __kmp_set_system_affinity(thread->th.th_affin_mask, true);
   KMP_CPU_FREE(old_mask);
+  thread->th.is_moldable = 0;
 
   __kmp_task_finish<false>(gtid, task, current_task);
 }

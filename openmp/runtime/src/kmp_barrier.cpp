@@ -2578,19 +2578,29 @@ void __kmp_fork_barrier(int gtid, int tid) {
   }
 
 #if KMP_AFFINITY_SUPPORTED
-  kmp_proc_bind_t proc_bind = team->t.t_proc_bind;
-  if (proc_bind == proc_bind_intel) {
-    // Call dynamic affinity settings
-    if (__kmp_affinity.type == affinity_balanced && team->t.t_size_changed) {
-      __kmp_balanced_affinity(this_thr, team->t.t_nproc);
-    }
-  } else if (proc_bind != proc_bind_false) {
-    if (this_thr->th.th_new_place == this_thr->th.th_current_place) {
-      KA_TRACE(100, ("__kmp_fork_barrier: T#%d already in correct place %d\n",
-                     __kmp_gtid_from_thread(this_thr),
-                     this_thr->th.th_current_place));
-    } else {
-      __kmp_affinity_set_place(gtid);
+  // We first check if we're in a moldable team
+  kmp_info_t *master_info = team->t.t_threads[0];
+  if (master_info->th.is_moldable == 1) {
+    // If we're in a moldable team, just copy the affinity from the master thread.
+    // TODO: Do we have to do cleanup somewhere?
+    kmp_affin_mask_t *mask = master_info->th.th_affin_mask;
+    KMP_CPU_COPY(this_thr->th.th_affin_mask, mask);
+    __kmp_set_system_affinity(this_thr->th.th_affin_mask, TRUE);
+  } else {
+    kmp_proc_bind_t proc_bind = team->t.t_proc_bind;
+    if (proc_bind == proc_bind_intel) {
+      // Call dynamic affinity settings
+      if (__kmp_affinity.type == affinity_balanced && team->t.t_size_changed) {
+        __kmp_balanced_affinity(this_thr, team->t.t_nproc);
+      }
+    } else if (proc_bind != proc_bind_false) {
+      if (this_thr->th.th_new_place == this_thr->th.th_current_place) {
+        KA_TRACE(100, ("__kmp_fork_barrier: T#%d already in correct place %d\n",
+                      __kmp_gtid_from_thread(this_thr),
+                      this_thr->th.th_current_place));
+      } else {
+        __kmp_affinity_set_place(gtid);
+      }
     }
   }
 #endif // KMP_AFFINITY_SUPPORTED
