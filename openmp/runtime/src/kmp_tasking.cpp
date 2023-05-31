@@ -3676,10 +3676,35 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
     kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
     kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
     int i;
+    // clear the global mask and release any suspended threads.
     KMP_CPU_SET_ITERATE(i, task_mask) {
-      KMP_CPU_CLR(i, global_mask);
+      if (KMP_CPU_ISSET(i, global_mask)) {
+        if (__kmp_moldable_suspend == 1 && i != __kmp_tid_from_gtid(gtid)) {
+          while (true) {
+            // to avoid clearing the global mask just before the thread goes to sleep, 
+            // we only clear the mask if the thread is outside the sleep region
+            if (__kmp_test_lock(&threads_data[i].td.td_in_sleep_region, gtid)) {
+              __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+              KMP_CPU_CLR(i, global_mask);
+              __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+              __kmp_release_lock(&threads_data[i].td.td_in_sleep_region, gtid);
+              break;
+            } else {
+              kmp_flag_64<> fl(&threads_data[i].td.td_fl,
+                              threads_data[i].td.td_thr);
+              if (fl.is_sleeping()) {
+                fl.release();
+              }
+              KMP_YIELD(true);
+            }
+          }
+        } else {
+          __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+          KMP_CPU_CLR(i, global_mask);
+          __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
+        }
+      }
     }
-    __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
   }
   
   KMP_DEBUG_ASSERT(thread->th.th_set_nproc == 0 || thread->th.th_set_nproc == threads_data[tid].td.td_moldable_team_sizes[team_i]);
@@ -3767,8 +3792,26 @@ static inline int __kmp_execute_tasks_template(
 
 #if KMP_MOLDABILITY
     if (__kmp_moldable_oversubscription_method == 1) {
+      if (__kmp_moldable_suspend == 1) {
+        __kmp_acquire_lock(&threads_data[tid].td.td_in_sleep_region, gtid);
+      }
       if (KMP_CPU_ISSET(tid, task_team->tt.tt_moldable_teams_affinity_mask)) {
-        return FALSE;
+        if (__kmp_moldable_suspend == 1) {
+          kmp_flag_64<> fl(&threads_data[tid].td.td_fl,
+                          threads_data[tid].td.td_thr);
+          fl.suspend(gtid);
+          KMP_DEBUG_ASSERT(KMP_CPU_ISSET(tid, task_team->tt.tt_moldable_teams_affinity_mask))
+          if (__kmp_moldable_suspend == 1) {
+            __kmp_release_lock(&threads_data[tid].td.td_in_sleep_region, gtid);
+          }
+          break;
+        } else {
+          KMP_YIELD(true);
+          break;
+        }
+      }
+      if (__kmp_moldable_suspend == 1) {
+        __kmp_release_lock(&threads_data[tid].td.td_in_sleep_region, gtid);
       }
     }
 #endif

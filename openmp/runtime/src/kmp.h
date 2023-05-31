@@ -2636,6 +2636,9 @@ typedef struct kmp_base_thread_data {
 
   // Index into td_steal_order of current thread we're trying to steal from tasks from
   kmp_int32 td_deque_steal_list_id;
+  // variables used for sleeping
+  kmp_lock_t td_in_sleep_region;
+  volatile kmp_uint64 td_fl;
 #endif
 #ifdef BUILD_TIED_TASK_STACK
   kmp_task_stack_t td_susp_tied_tasks; // Stack of suspended tied tasks for task
@@ -3412,6 +3415,7 @@ extern int __kmp_teams_thread_limit;
 
 #if KMP_MOLDABILITY
 extern int __kmp_moldable_levels;
+extern int __kmp_moldable_suspend;
 extern int __kmp_moldable_time_method;
 extern int __kmp_moldable_exp_average;
 extern int __kmp_moldable_oversubscription_method;
