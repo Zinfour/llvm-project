@@ -3801,7 +3801,7 @@ static inline int __kmp_execute_tasks_template(
   kmp_taskdata_t *current_task = thread->th.th_current_task;
   std::atomic<kmp_int32> *unfinished_threads;
   kmp_int32 nthreads, victim_tid = -2, use_own_tasks = 1, new_victim = 0,
-                      tid = thread->th.th_info.ds.ds_tid;
+                      tid = thread->th.th_info.ds.ds_tid, override_tid=-1;
 
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
   KMP_DEBUG_ASSERT(thread == __kmp_threads[gtid]);
@@ -3862,6 +3862,7 @@ static inline int __kmp_execute_tasks_template(
       task = NULL;
 #if KMP_MOLDABILITY
       team_i = -1;
+      override_tid = -1;
 #endif
       if (task_team->tt.tt_num_task_pri) { // get priority task first
         task = __kmp_get_priority_task(gtid, task_team, is_constrained);
@@ -3872,13 +3873,14 @@ static inline int __kmp_execute_tasks_template(
 #if KMP_MOLDABILITY
       if (task == NULL && use_own_tasks) { // check own moldable queue next
         for (int i = 0; i < MAX_TEAMS_PER_THREAD; i++) {
-          if (threads_data[tid].td.td_moldable_team_sizes[MAX_TEAMS_PER_THREAD - 1 - i] == 0) {
-            continue;
-          }
-          task = __kmp_remove_my_moldable_task(thread, gtid, task_team, is_constrained, MAX_TEAMS_PER_THREAD - 1 - i);
-          if (task != NULL) {
-            team_i = MAX_TEAMS_PER_THREAD - 1 - i;
-            break;
+          kmp_int32 other_tid = __kmp_get_valid_tid_for_team_i(task_team, tid, i);
+          if (other_tid != -1) {
+            task = __kmp_remove_my_moldable_task(thread, gtid, other_tid, task_team, is_constrained, i, unfinished_threads, thread_finished);
+            if (task != NULL) {
+              team_i = i;
+              override_tid = other_tid;
+              break;
+            }
           }
         }
       }
