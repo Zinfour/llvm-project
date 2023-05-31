@@ -4918,12 +4918,12 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
             }
             break;
           } else if (c == m) {
+            if (m != -1) {
+              cur_id[cur_level] = 0;
+            }
             if (cur_level == 0) {
               done = true;
               break;
-            }
-            if (m != -1) {
-              cur_id[cur_level] = 0;
             }
             cur_level--;
           }
