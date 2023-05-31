@@ -218,9 +218,9 @@ int __kmp_teams_thread_limit = 0;
 int __kmp_moldable_levels = 2;
 int __kmp_moldable_time_method = 0; // 0=use hardware time, 1=use rusage.
 int __kmp_moldable_exp_average = 10; // controls the amount of smoothing.
-int __kmp_moldable_oversubscription_method = 0; // 0=no protection against oversubscription.
-int __kmp_moldable_work_stealing = 0; // 0=disabled, 1=enabled
-int __kmp_moldable_push_to_own_queue = 0; // should we give tasks to queues or push to own queue.
+int __kmp_moldable_oversubscription_method = 1; // 0=no protection against oversubscription.
+int __kmp_moldable_work_stealing = 1; // 0=disabled, 1=enabled
+int __kmp_moldable_push_to_own_queue = 0; // should we give tasks to queues or push to own queue. currently not used.
 int __kmp_moldable_replicate_queues = 0; // should we replicate queues to all threads so
                                          // that they can all launch threads with large widths?
 int __kmp_moldable_suspend = 1; // Should threads suspend when overlapping team executes a task.
