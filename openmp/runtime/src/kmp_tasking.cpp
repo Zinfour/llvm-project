@@ -4617,10 +4617,10 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
       __kmp_free(thread_data->td.td_steal_order);
     }
 
-    // Our steal order will contain at most every other thread
-    kmp_int32 other_threads = task_team->tt.tt_nproc - 1;
+    // Our steal order will contain at most each thread once
+    kmp_int32 all_threads = task_team->tt.tt_nproc;
 
-    thread_data->td.td_steal_order = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
+    thread_data->td.td_steal_order = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * all_threads);
 
 
     // Number of encountered threads
@@ -4643,7 +4643,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
 
         if (KMP_CPU_ISSET(t, mask)) {
           // We keep the new numbers in a seperate list so that we can randomize it.
-          kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * other_threads);
+          kmp_int32 *tmp_list = (kmp_int32 *) __kmp_allocate(sizeof(kmp_int32) * all_threads);
           int tmp_list_len = 0;
 
           int t2;
@@ -4651,7 +4651,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
             // CPU_SET_ITERATE should only return set bits.
             KMP_DEBUG_ASSERT(KMP_CPU_ISSET(t2, mask));
 
-            if (t2 == t || team_count[t2] == 0) {
+            if (team_count[t2] == 0) {
               continue;
             }
 
@@ -4672,7 +4672,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
             if (!duplicate) {
               tmp_list[tmp_list_len] = t2;
               tmp_list_len++;
-              KMP_DEBUG_ASSERT(tmp_list_len <= other_threads);
+              KMP_DEBUG_ASSERT(tmp_list_len <= all_threads);
             }
           }
 
@@ -4697,7 +4697,7 @@ static void __kmp_create_steal_lists(kmp_task_team_t *task_team, kmp_info_t *thr
       }
     }
     thread_data->td.td_steal_order_len = last;
-    KMP_DEBUG_ASSERT(last <= other_threads);
+    KMP_DEBUG_ASSERT(last <= all_threads);
     KA_TRACE(1, ("\n"));
   }
   __kmp_free(team_count);
