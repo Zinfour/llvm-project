@@ -224,6 +224,7 @@ int __kmp_moldable_push_to_own_queue = 0; // should we give tasks to queues or p
 int __kmp_moldable_replicate_queues = 0; // should we replicate queues to all threads so
                                          // that they can all launch threads with large widths?
 int __kmp_moldable_suspend = 1; // Should threads suspend when overlapping team executes a task.
+int __kmp_moldable_shared_queues = 1; // make moldable teams shared between its threads
 #endif
 
 #if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT

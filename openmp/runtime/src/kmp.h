@@ -2636,6 +2636,9 @@ typedef struct kmp_base_thread_data {
 
   // Index into td_steal_order of current thread we're trying to steal from tasks from
   kmp_int32 td_deque_steal_list_id;
+
+  kmp_int32 td_parent_thread;
+
   // variables used for sleeping
   kmp_lock_t td_in_sleep_region;
   volatile kmp_uint64 td_fl;
@@ -3422,6 +3425,7 @@ extern int __kmp_moldable_oversubscription_method;
 extern int __kmp_moldable_work_stealing;
 extern int __kmp_moldable_push_to_own_queue;
 extern int __kmp_moldable_replicate_queues;
+extern int __kmp_moldable_shared_queues;
 #endif
 
 /* ------------------------------------------------------------------------- */

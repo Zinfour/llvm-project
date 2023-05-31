@@ -3264,21 +3264,44 @@ static kmp_task_t *__kmp_remove_my_task(kmp_info_t *thread, kmp_int32 gtid,
   return task;
 }
 #if KMP_MOLDABILITY
+
+static kmp_int32 __kmp_get_valid_tid_for_team_i(kmp_task_team_t *task_team, kmp_int32 tid, int team_i) {
+  if (__kmp_moldable_shared_queues == 0) {
+    if (task_team->tt.tt_threads_data[tid].td.td_moldable_team_sizes[team_i] == 0) {
+      return -1;
+    } else {
+      return tid;
+    }
+  } else {
+    int current_tid = tid;
+    while (current_tid != -1) {
+
+      if (task_team->tt.tt_threads_data[current_tid].td.td_moldable_team_sizes[team_i] != 0) {
+        return current_tid;
+      } else {
+        current_tid = task_team->tt.tt_threads_data[current_tid].td.td_parent_thread;
+      }
+    }
+    return -1;
+  }
+}
 // __kmp_remove_my_moldable_task: remove a moldable task from the deque of a
 // moldable team which I'm the master thread of
-static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 gtid,
+static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 gtid, kmp_int32 tid,
                                         kmp_task_team_t *task_team,
-                                        kmp_int32 is_constrained, int team_i) {
+                                        kmp_int32 is_constrained, int team_i,
+                                        std::atomic<kmp_int32> *unfinished_threads,
+                                        int *thread_finished) {
   kmp_task_t *task;
   kmp_taskdata_t *taskdata;
   kmp_thread_data_t *thread_data;
   kmp_uint32 tail;
-
+  KMP_DEBUG_ASSERT(team_i != -1);
   KMP_DEBUG_ASSERT(__kmp_tasking_mode != tskm_immediate_exec);
   KMP_DEBUG_ASSERT(task_team->tt.tt_threads_data !=
                    NULL); // Caller should check this condition
 
-  thread_data = &task_team->tt.tt_threads_data[__kmp_tid_from_gtid(gtid)];
+  thread_data = &task_team->tt.tt_threads_data[tid];
 
   KA_TRACE(10, ("__kmp_remove_my_moldable_task(enter): T#%d ntasks=%d head=%u tail=%u\n",
                 gtid, thread_data->td.td_moldable_deque_ntaskss[team_i],
@@ -3294,6 +3317,8 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   }
 
   __kmp_acquire_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
+
+  int ntasks = TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]);
 
   if (TCR_4(thread_data->td.td_moldable_deque_ntaskss[team_i]) == 0) {
     __kmp_release_bootstrap_lock(&thread_data->td.td_moldable_deque_locks[team_i]);
@@ -3360,6 +3385,25 @@ static kmp_task_t *__kmp_remove_my_moldable_task(kmp_info_t *thread, kmp_int32 g
   thread_data->td.td_moldable_deque_tails[team_i] = tail;
   TCW_4(thread_data->td.td_moldable_deque_ntaskss[team_i], thread_data->td.td_moldable_deque_ntaskss[team_i] - 1);
   
+
+  if (tid != __kmp_tid_from_gtid(gtid)) {
+    if (*thread_finished) {
+      // We need to un-mark this victim as a finished victim.  This must be done
+      // before releasing the lock, or else other threads (starting with the
+      // primary thread victim) might be prematurely released from the barrier!!!
+#if KMP_DEBUG
+      kmp_int32 count =
+#endif
+          KMP_ATOMIC_INC(unfinished_threads);
+      KA_TRACE(
+          20,
+          ("__kmp_steal_moldable_task: T#%d inc unfinished_threads to %d: task_team=%p\n",
+          gtid, count + 1, task_team));
+      *thread_finished = FALSE;
+    }
+    TCW_4(thread_data->td.td_moldable_deque_ntaskss[team_i], ntasks - 1);
+  }
+
   if (__kmp_moldable_oversubscription_method == 1) {
     KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
     __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
@@ -3639,12 +3683,11 @@ static kmp_task_t *__kmp_steal_moldable_task(kmp_info_t *victim_thr, kmp_int32 g
   return task;
 }
 
-static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *thread,
+static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_int32 tid, kmp_info_t *thread,
                                         kmp_task_t *task, kmp_thread_data_t *threads_data,
                                         kmp_taskdata_t *current_task) {
   kmp_task_team_t *task_team = thread->th.th_task_team;
   kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
-  kmp_int32 tid = thread->th.th_info.ds.ds_tid;
   kmp_uint64 start_time;
   kmp_uint64 end_time;
 
@@ -3672,7 +3715,6 @@ static void __kmp_execute_moldable_task(int team_i, kmp_int32 gtid, kmp_info_t *
   __kmpc_fork_teams(taskdata->td_ident, 2, VOLATILE_CAST(microtask_t) __kmp_invoke_task_dummy2, task, &cost);
 
   if (__kmp_moldable_oversubscription_method == 1) {
-    __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
     kmp_affin_mask_t *task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
     kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
     int i;
@@ -3974,10 +4016,6 @@ static inline int __kmp_execute_tasks_template(
           if (moldable_task) {
             kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
             // we choose the lowest runtime team.
-            int spins;
-            int time;
-            KMP_INIT_YIELD(spins); // Setup for waiting
-            KMP_INIT_BACKOFF(time);
             while (true) {
               bool cont;
               int i;
@@ -3985,14 +4023,19 @@ static inline int __kmp_execute_tasks_template(
               kmp_affin_mask_t *task_mask;
               kmp_affin_mask_t *global_mask = task_team->tt.tt_moldable_teams_affinity_mask;
               team_i = -1;
-              for (int j = 0; j < MAX_TEAMS_PER_THREAD; j++) {
-                int team_j = MAX_TEAMS_PER_THREAD - 1 - j;
-                kmp_int32 team_size = threads_data[tid].td.td_moldable_team_sizes[team_j];
+              for (int team_j = 0; team_j < MAX_TEAMS_PER_THREAD; team_j++) {
+                kmp_int32 other_tid = __kmp_get_valid_tid_for_team_i(task_team, tid, team_j);
+                if (other_tid == -1) {
+                  continue;
+                }
+                kmp_int32 team_size = threads_data[other_tid].td.td_moldable_team_sizes[team_j];
                 if (team_size != 0) {
-                  kmp_uint64 runtime = taskdata->td_task_stats->ts.ts_cost[(team_j) * task_team->tt.tt_nproc + tid] / (kmp_int64) team_size;
+                   // add randomness for the case where cost is zero.
+                  kmp_uint64 c = taskdata->td_task_stats->ts.ts_cost[(team_j) * task_team->tt.tt_nproc + other_tid] + (__kmp_get_random(thread) % 1000);
+                  kmp_uint64 runtime = c / team_size;
                   if (runtime < best_so_far) {
                     if (__kmp_moldable_oversubscription_method == 1) {
-                      task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_j];
+                      task_mask = threads_data[other_tid].td.td_moldable_team_affin_masks[team_j];
                       cont = false;
                       KMP_CPU_SET_ITERATE(i, task_mask) {
                         if (KMP_CPU_ISSET(i, global_mask)) {
@@ -4006,17 +4049,20 @@ static inline int __kmp_execute_tasks_template(
                     }
                     best_so_far = runtime;
                     team_i = team_j;
+                    override_tid = other_tid;
                   }
                 }
               }
               if (team_i == -1) {
-                KMP_YIELD_OVERSUB_ELSE_SPIN(spins, time);
-                continue;
+                // there is no team we can use so we push the task to our own queue
+                __kmp_give_task(thread, tid, task, 0, 0);
+                task = NULL;
+                break;
               }
 
               if (__kmp_moldable_oversubscription_method == 1) {
                 __kmp_acquire_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-                task_mask = threads_data[tid].td.td_moldable_team_affin_masks[team_i];
+                task_mask = threads_data[override_tid].td.td_moldable_team_affin_masks[team_i];
                 cont = false;
                 KMP_CPU_SET_ITERATE(i, task_mask) {
                   if (KMP_CPU_ISSET(i, global_mask)) {
@@ -4026,10 +4072,13 @@ static inline int __kmp_execute_tasks_template(
                 }
                 if (cont) {
                   __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
-                  KMP_YIELD_OVERSUB_ELSE_SPIN(spins, time);
-                  continue;
+                  // if we get here our planned team cannot
+                  // be used rith now, so we push the task to our own queue.
+                  __kmp_give_task(thread, tid, task, 0, 0);
+                  task = NULL;
+                  break;
                 }
-                KMP_DEBUG_ASSERT(KMP_CPU_ISSET(tid, task_mask));
+                KMP_DEBUG_ASSERT(KMP_CPU_ISSET(override_tid, task_mask));
                 KMP_CPU_UNION(task_team->tt.tt_moldable_teams_affinity_mask, task_mask);
                 
                 __kmp_release_bootstrap_lock(&task_team->tt.tt_moldable_teams_affinity_lock);
@@ -4095,18 +4144,27 @@ static inline int __kmp_execute_tasks_template(
       kmp_taskdata_t *taskdata = KMP_TASK_TO_TASKDATA(task);
       kmp_routine_entry_t tr = task->routine;
       const char *name = taskdata->td_ident->psource;
-      kmp_uint64 start = __kmp_hardware_timestamp();
+      kmp_uint64 start = KMP_NOW();
       int extra_id = 0;
 #if KMP_MOLDABILITY
-
       if (taskdata->td_moldable) {
-        extra_id = threads_data[tid].td.td_moldable_team_sizes[team_i];
-        __kmp_execute_moldable_task(team_i, gtid, thread, task, threads_data, current_task);
-      } else
+        if (override_tid == -1) {
+          override_tid = tid;
+        }
+        extra_id = threads_data[override_tid].td.td_moldable_team_sizes[team_i];
+        __kmp_execute_moldable_task(team_i, gtid, override_tid, thread, task, threads_data, current_task);
+        int ii;
+        KMP_CPU_SET_ITERATE(ii, threads_data[override_tid].td.td_moldable_team_affin_masks[team_i]) {
+          KA_TRACE(1, ("taskdebug, %d, %llu, %llu, %p, %s%d\n", task_team->tt.tt_threads_data[ii].td.td_thr->th.th_info.ds.ds_gtid, start, KMP_NOW(), tr, name, extra_id));
+        }
+      } else {
 #endif
       __kmp_invoke_task(gtid, task, current_task);
-      KA_TRACE(1, ("taskdebug, %d, %llu, %llu, %p, %s%d\n", gtid, start, __kmp_hardware_timestamp(), tr, name, extra_id));
 
+#if KMP_MOLDABILITY
+        KA_TRACE(1, ("taskdebug, %d, %llu, %llu, %p, %s%d\n", gtid, start, KMP_NOW(), tr, name, extra_id));
+      }
+#endif
 #if USE_ITT_BUILD
       if (itt_sync_obj != NULL)
         __kmp_itt_task_finished(itt_sync_obj);
@@ -4409,6 +4467,7 @@ static void __kmp_alloc_task_deque(kmp_info_t *thread,
   KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_deque_ntasks) == 0);
   KMP_DEBUG_ASSERT(thread_data->td.td_deque_head == 0);
   KMP_DEBUG_ASSERT(thread_data->td.td_deque_tail == 0);
+  KMP_DEBUG_ASSERT(thread_data->td.td_deque_steal_list_id == 0);
 
   KE_TRACE(
       10,
@@ -4910,6 +4969,48 @@ static int __kmp_realloc_task_threads_data(kmp_info_t *thread,
     KMP_CPU_FREE(tmp_mask);
 
     __kmp_create_steal_lists(task_team, thread);
+
+    if (__kmp_moldable_shared_queues == 1) {
+      for (int t = 0; t < task_team->tt.tt_nproc; t++) {
+        kmp_thread_data_t *thread_data = &(*threads_data_p)[t];
+        // count number of teams for the thread.
+        int teams_n;
+        for (teams_n = 0; teams_n < MAX_TEAMS_PER_THREAD; teams_n++) {
+          if (thread_data->td.td_moldable_team_sizes[teams_n] == 0) {
+            break;
+          }
+        }
+        // reverse the list.
+        for (int team_i = 0; team_i < teams_n/2; team_i++) {
+          int team_j = teams_n - 1 - team_i;
+          kmp_int32 tmp = thread_data->td.td_moldable_team_sizes[team_i];
+          thread_data->td.td_moldable_team_sizes[team_i] = thread_data->td.td_moldable_team_sizes[team_j];
+          thread_data->td.td_moldable_team_sizes[team_j] = tmp;
+
+          kmp_affin_mask_t *tmp2 = thread_data->td.td_moldable_team_affin_masks[team_i];
+          thread_data->td.td_moldable_team_affin_masks[team_i] = thread_data->td.td_moldable_team_affin_masks[team_j];
+          thread_data->td.td_moldable_team_affin_masks[team_j] = tmp2;
+          KA_TRACE(1, ("trollol: %d:%d\n", team_i, team_j));
+        }
+      }
+    
+      for (int t = 0; t < task_team->tt.tt_nproc; t++) {
+        kmp_thread_data_t *thread_data = &(*threads_data_p)[t];
+        thread_data->td.td_parent_thread = -1;
+        for (int team_i = 0; team_i < MAX_TEAMS_PER_THREAD; team_i++) {
+          if (thread_data->td.td_moldable_team_sizes[team_i] == 0) {
+            for (int t2 = 0; t2 < task_team->tt.tt_nproc; t2++) {
+              if (task_team->tt.tt_threads_data[t2].td.td_moldable_team_sizes[team_i] != 0 && KMP_CPU_ISSET(t, task_team->tt.tt_threads_data[t2].td.td_moldable_team_affin_masks[team_i])) {
+                thread_data->td.td_parent_thread = t2;
+                break;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
     KA_TRACE(1, ("created %d moldable task teams\n", i+1));
 #endif
 
