@@ -4467,11 +4467,11 @@ static void __kmp_alloc_task_deque(kmp_info_t *thread,
   // Initialize last stolen task field to "none"
   thread_data->td.td_deque_last_stolen_m = -1;
   thread_data->td.td_deque_last_stolen_mteam = -1;
+  thread_data->td.td_deque_steal_list_id = 0;
 
   KMP_DEBUG_ASSERT(TCR_4(thread_data->td.td_deque_ntasks) == 0);
   KMP_DEBUG_ASSERT(thread_data->td.td_deque_head == 0);
   KMP_DEBUG_ASSERT(thread_data->td.td_deque_tail == 0);
-  KMP_DEBUG_ASSERT(thread_data->td.td_deque_steal_list_id == 0);
 
   KE_TRACE(
       10,
